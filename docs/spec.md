@@ -331,7 +331,7 @@ As a logged-in user, I want to view another user's public profile so that I can 
 ## Feature: Notifications
 
 ### User Story
-As a logged-in user, I want an in-app notification centre so that I know when someone follows me or invites me to an event.
+As a logged-in user, I want an in-app notification centre so that I know when I am invited to an event.
 
 ### Acceptance Criteria
 - [ ] The notification bell in the app bar shows a real-time unread count badge when there are unread notifications.
@@ -361,20 +361,16 @@ As a logged-in user, I want to configure my app language, birthday reminder lead
 
 ## Open Questions
 
-1. **Follow / Unfollow UI**: The Firestore social graph schema and the notification type for `newFollower` are both implemented, and a follower count is shown on user profiles. However, no explicit "Follow" or "Unfollow" button was found in any of the screens reviewed. It is unclear whether this button exists elsewhere (e.g., on the User Profile page via a widget not yet read), or whether following is only established via the birthday/contact import flow. The product owner should clarify where and how a user explicitly follows another user.
+1. **AI Curator — country hardcoded to "ES"**: The Gift Agent page passes `residenceCountry: 'ES'` unconditionally to the recommendation service, ignoring the logged-in user's actual residence country. Clarify whether this is intentional (Spain only for now) or a known gap to be resolved.
 
-2. **AI Curator — country hardcoded to "ES"**: The Gift Agent page passes `residenceCountry: 'ES'` unconditionally to the recommendation service, ignoring the logged-in user's actual residence country. Clarify whether this is intentional (Spain only for now) or a known gap to be resolved.
+2. **Occasion Detail — gift recommendations persistence**: When "Get Curated Recommendations" is tapped on an Occasion Detail, it is unclear whether the returned recommendations are persisted back to the occasion's Firestore document or are only shown transiently in the session. The product owner should confirm expected behaviour.
 
-3. **Occasion Detail — gift recommendations persistence**: When "Get Curated Recommendations" is tapped on an Occasion Detail, it is unclear whether the returned recommendations are persisted back to the occasion's Firestore document or are only shown transiently in the session. The product owner should confirm expected behaviour.
+3. **Occasion wishlist hints vs. product catalog**: The Create Occasion form allows the user to add free-text "wishlist hints" (strings). The Occasion entity also has a `wishlist` field typed as `List<WishlistItem>` (which references actual catalog `Product` IDs). It is ambiguous how free-text hints are reconciled with the structured WishlistItem model — the product owner should clarify whether hints auto-resolve to products or remain as plain strings.
 
-4. **Occasion wishlist hints vs. product catalog**: The Create Occasion form allows the user to add free-text "wishlist hints" (strings). The Occasion entity also has a `wishlist` field typed as `List<WishlistItem>` (which references actual catalog `Product` IDs). It is ambiguous how free-text hints are reconciled with the structured WishlistItem model — the product owner should clarify whether hints auto-resolve to products or remain as plain strings.
+4. **Search tab — unauthenticated wishlist toggle**: The Discover tab renders for both guests and logged-in users, but the code only skips the wishlist API call if `_currentUserId == null`. It is not clear whether the UI wishlist toggle button is hidden or simply no-ops for guests. The product owner should confirm the intended UX for unauthenticated product browsing.
 
-5. **Delete Account — data cleanup**: The Delete Account action removes the Firebase Auth record but it is not specified whether the associated Firestore documents (profile, occasions, wishlist, collections, follower graph) are also deleted. The product owner should confirm the expected data-retention behaviour on account deletion.
+5. **Occasion types vs. Gift Agent occasions**: The `OccasionType` enum contains 8 values (including `housewarming` and `graduation`) that are shown in the Gift Agent but only 5 of these appear as quick-select chips on the Create Occasion screen (`birthday`, `christmas`, `wedding`, `anniversary`, `babyShower`). Should all 8 types be available as quick-chips when creating an occasion, or is the shorter list intentional?
 
-6. **Search tab — unauthenticated wishlist toggle**: The Discover tab renders for both guests and logged-in users, but the code only skips the wishlist API call if `_currentUserId == null`. It is not clear whether the UI wishlist toggle button is hidden or simply no-ops for guests. The product owner should confirm the intended UX for unauthenticated product browsing.
+6. **Language support scope**: The Preferences screen offers English and Spanish. It is unclear whether the rest of the app's UI strings are fully translated for both languages, or whether Spanish support is partial. The product owner should confirm localisation completeness before launch.
 
-7. **Occasion types vs. Gift Agent occasions**: The `OccasionType` enum contains 8 values (including `housewarming` and `graduation`) that are shown in the Gift Agent but only 5 of these appear as quick-select chips on the Create Occasion screen (`birthday`, `christmas`, `wedding`, `anniversary`, `babyShower`). Should all 8 types be available as quick-chips when creating an occasion, or is the shorter list intentional?
-
-8. **Language support scope**: The Preferences screen offers English and Spanish. It is unclear whether the rest of the app's UI strings are fully translated for both languages, or whether Spanish support is partial. The product owner should confirm localisation completeness before launch.
-
-9. **Notification delivery mechanism**: The notification centre reads from Firestore, but it is not clear whether push notifications (APNs / FCM) are also implemented to alert users when the app is in the background. Clarify the intended notification delivery scope.
+7. **Notification delivery mechanism**: The notification centre reads from Firestore, but it is not clear whether push notifications (APNs / FCM) are also implemented to alert users when the app is in the background. Clarify the intended notification delivery scope.
