@@ -15,6 +15,11 @@
 - Decision: Remove the geo-limitation banner. The Gift Agent already reads residenceCountry from the user's Firestore profile and falls back to IP geolocation → device locale → 'US'. No country is hardcoded. Supported markets: ES, US, CO (and any country with affiliate catalog coverage going forward).
 - Made by: Product Owner
 
+## 2026-06-30 — AI gift recommendations triggered only from Agenda; persisted per occasion
+- Context: Two entry points existed for AI recommendations — Occasion Detail ("GET AI RECOMMENDATIONS" button) and Calendar view (star icon on event card). Results from the detail page were already persisted to the occasion wishlist; results from the calendar were ephemeral. Product owner wants a single, simplified flow and cost control (one AI call per occasion).
+- Decision: Remove the generate button from Occasion Detail (keep read-only display of persisted AI picks). Calendar is the sole trigger. On first request, results are persisted as WishlistItem objects (source: ai) on the occasion. Once persisted, the calendar button is permanently disabled for that occasion. Registered-user country from Firestore profile and budget from UserSettings are used for the call; guests fall back to IP geolocation.
+- Made by: Product Owner
+
 ## 2026-06-30 — Added Flutter Integration Notes to architecture.md
 - Context: Flutter dev needs a concise reference for auth, the Firestore-to-Spring recommendation handoff, URL namespace rules, country filtering, and the availability-check pattern.
 - Decision: Appended `## 8. Flutter Integration Notes` to docs/architecture.md covering those five topics. Also flagged that `POST /api/v1/gifts/recommendations` is auth-free despite carrying personal PII — backend expert should assess adding Firebase JWT requirement.
