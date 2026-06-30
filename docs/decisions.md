@@ -20,6 +20,11 @@
 - Decision: Remove the generate button from Occasion Detail (keep read-only display of persisted AI picks). Calendar is the sole trigger. On first request, results are persisted as WishlistItem objects (source: ai) on the occasion. Once persisted, the calendar button is permanently disabled for that occasion. Registered-user country from Firestore profile and budget from UserSettings are used for the call; guests fall back to IP geolocation.
 - Made by: Product Owner
 
+## 2026-06-30 — Rejected DDD rename of "Occasion" to "Event"
+- Context: Product owner evaluated renaming the core aggregate "Occasion" to "Event" for ubiquitous language alignment. Backend expert assessed domain fit, naming conflicts, and blast radius.
+- Decision: Do not rename. "Occasion" is more domain-precise than "Event" for a gift-giving milestone. "Event" is maximally overloaded in the Java/Spring/Spring Modulith stack (ApplicationEvent, ApplicationEventPublisher, Modulith transactional events, Kafka). The production Firestore collection `events/{uid}/events/{eventId}` would require a live data migration with no tooling. Counterproposal: if consistency is desired, rename the Firestore path from `events/` to `occasions/` in a future backend cleanup, not the other way around. "Occasion" remains the canonical ubiquitous language term.
+- Made by: Product Owner (advised by backend-expert, frontend-expert, functional-analyst)
+
 ## 2026-06-30 — Added Flutter Integration Notes to architecture.md
 - Context: Flutter dev needs a concise reference for auth, the Firestore-to-Spring recommendation handoff, URL namespace rules, country filtering, and the availability-check pattern.
 - Decision: Appended `## 8. Flutter Integration Notes` to docs/architecture.md covering those five topics. Also flagged that `POST /api/v1/gifts/recommendations` is auth-free despite carrying personal PII — backend expert should assess adding Firebase JWT requirement.
