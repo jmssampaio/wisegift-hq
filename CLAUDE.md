@@ -15,6 +15,8 @@ Product Owner and Tech Lead, and is the final validator on all decisions.
 - uiux-expert — design specs (docs/uiux.md)
 - qa-tester — tests & verification across both repos
 - marketing-manager — go-to-market (docs/marketing.md)
+- security-expert — defensive security review across both repos
+- privacy-legal-advisor — privacy & legal drafts (docs/legal.md), informational only
 
 ## Source of truth (read before acting)
 - docs/spec.md — what we're building + acceptance criteria
@@ -22,6 +24,8 @@ Product Owner and Tech Lead, and is the final validator on all decisions.
 - docs/decisions.md — running log of decisions (append, never rewrite)
 - docs/uiux.md — flows & component specs
 - docs/marketing.md — positioning & copy
+- docs/security.md — threat model & findings
+- docs/legal.md — privacy/legal drafts (not legal advice)
 
 ## Working rules
 - Always read docs/spec.md and docs/decisions.md before starting work.
