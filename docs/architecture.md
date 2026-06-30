@@ -78,8 +78,6 @@ The mobile client (iOS and Android). Handles authentication via Firebase Auth SD
 - **Firebase Authentication:** Source of truth for user identity. Issues JWTs consumed by the Spring API for protected endpoints.
 - **Firestore:** Stores the active social graph and user-generated content with low-latency document access.
   - `users/{uid}` — profile data (name, birthday, gender, interests, residence country)
-  - `users/{uid}/following/{targetId}` — social graph: who this user follows
-  - `users/{uid}/followers/{targetId}` — social graph: who follows this user
   - `events/{uid}/events/{eventId}` — birthdays and occasions
 
 ### Intelligence Layer — Spring Modulith
@@ -160,8 +158,6 @@ When a user requests gift ideas for a recipient:
 | Collection path | Fields |
 |---|---|
 | `users/{uid}` | name, birthday, gender, interests[], residenceCountry |
-| `users/{uid}/following/{targetId}` | social graph edge (this user → followee) |
-| `users/{uid}/followers/{targetId}` | social graph edge (follower → this user) |
 | `users/{uid}/blocked_users/{targetId}` | blocked user record |
 | `users/{uid}/private_birthdays/{birthdayId}` | birthday agenda entries |
 | `users/{uid}/contacts/{contactId}` | imported device contacts |

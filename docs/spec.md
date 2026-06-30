@@ -165,6 +165,7 @@ As a user, I want an AI-powered gift finder that walks me through a short questi
 - [ ] Tapping a gift card opens the product's affiliate URL in the device's default browser.
 - [ ] On error, a snackbar describes the failure and the user remains on the curator screen.
 - [ ] The AI Curator is accessible to both logged-in and logged-out users.
+- [ ] The recommendation request uses the logged-in user's `residenceCountry` from their Firestore profile. For guests, the country is resolved via IP geolocation, falling back to device locale, then `US`.
 
 ---
 
@@ -318,7 +319,7 @@ As any user (authenticated or not), I want to browse another person's public gif
 As a logged-in user, I want to view another user's public profile so that I can see their interests and access their gift storefront.
 
 ### Acceptance Criteria
-- [ ] Visiting another user's profile shows their @username, follower count, birthday, country, gender, and interests.
+- [ ] Visiting another user's profile shows their @username, birthday, country, gender, and interests.
 - [ ] A "Storefront" tile links to that user's public wish list screen (in-app, showing only their public items).
 - [ ] Logged-in users who view another user's profile can access a moderation menu (three-dot icon) with two options:
   - **Report**: opens a text field dialog; on confirmation, submits a report to the backend and shows a "User reported" snackbar.
@@ -335,7 +336,7 @@ As a logged-in user, I want an in-app notification centre so that I know when so
 ### Acceptance Criteria
 - [ ] The notification bell in the app bar shows a real-time unread count badge when there are unread notifications.
 - [ ] The Notifications screen lists all notifications in reverse-chronological order. Each item shows a type-specific icon, title, body text, and formatted timestamp.
-- [ ] Notification types currently supported: **newFollower** (blue icon) and **eventInvite** (orange icon). All other types show a generic icon.
+- [ ] Notification types currently supported: **eventInvite** (orange icon). All other types show a generic icon.
 - [ ] Unread notifications are visually distinguished from read ones (border colour and background tint).
 - [ ] Tapping any notification marks it as read.
 - [ ] Tapping an **eventInvite** notification also navigates to the relevant Occasion Detail screen.
@@ -355,19 +356,6 @@ As a logged-in user, I want to configure my app language, birthday reminder lead
 - [ ] **Per-relationship budget limits**: separate sliders for Partner, Close Family, Close Friend, and Other, each ranging from €10 to €500.
 - [ ] Tapping "Save Preferences" or the checkmark in the app bar persists the settings to Firestore and closes the screen with a success snackbar.
 - [ ] On error, a snackbar describes the failure and the screen remains open.
-
----
-
-## Feature: Social Graph — Contacts and Following
-
-### User Story
-As a logged-in user, I want to follow other WiseGift users (my "inner circle") so that the app can use their profiles to improve gift recommendations for them.
-
-### Acceptance Criteria
-- [ ] The Firestore social graph stores follows under `followers/{uid}/following/{targetUid}`.
-- [ ] A user's follower count is surfaced on their public profile page.
-- [ ] A "newFollower" notification is generated when someone starts following a user.
-- [ ] (No explicit follow/unfollow button UI was observed in the screens reviewed — see Open Questions.)
 
 ---
 
