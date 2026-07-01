@@ -361,12 +361,16 @@ As a logged-in user, I want to configure my app language, birthday reminder lead
 
 ## Open Questions
 
-1. **Occasion wishlist hints vs. product catalog**: The Create Occasion form allows the user to add free-text "wishlist hints" (strings). The Occasion entity also has a `wishlist` field typed as `List<WishlistItem>` (which references actual catalog `Product` IDs). It is ambiguous how free-text hints are reconciled with the structured WishlistItem model — the product owner should clarify whether hints auto-resolve to products or remain as plain strings.
+1. **Notification delivery mechanism**: The notification centre reads from Firestore, but push notifications (APNs / FCM via `FirebaseMessaging`) are **not yet implemented** in the main codebase. Users only see notifications when the app is open. Decide scope before launch: in-app only, or also background push?
 
-2. **Search tab — unauthenticated wishlist toggle**: The Discover tab renders for both guests and logged-in users, but the code only skips the wishlist API call if `_currentUserId == null`. It is not clear whether the UI wishlist toggle button is hidden or simply no-ops for guests. The product owner should confirm the intended UX for unauthenticated product browsing.
+---
 
-3. **Occasion types vs. Gift Agent occasions**: The `OccasionType` enum contains 8 values (including `housewarming` and `graduation`) that are shown in the Gift Agent but only 5 of these appear as quick-select chips on the Create Occasion screen (`birthday`, `christmas`, `wedding`, `anniversary`, `babyShower`). Should all 8 types be available as quick-chips when creating an occasion, or is the shorter list intentional?
+## Resolved Questions
 
-4. **Language support scope**: The Preferences screen offers English and Spanish. It is unclear whether the rest of the app's UI strings are fully translated for both languages, or whether Spanish support is partial. The product owner should confirm localisation completeness before launch.
+- **Occasion wishlist hints vs. product catalog** *(closed 2026-07-01)*: `WishlistItem` always references a real catalog `productId`. The `hint` field is used only for AI-generated item descriptions. The `AddGiftWishSheet` surfaces two tabs — CATALOG search and MY COLLECTIONS — so users always select real products. Free-text chips described in an earlier spec draft were never implemented.
 
-5. **Notification delivery mechanism**: The notification centre reads from Firestore, but it is not clear whether push notifications (APNs / FCM) are also implemented to alert users when the app is in the background. Clarify the intended notification delivery scope.
+- **Guest save button on product cards** *(closed 2026-07-01)*: The save/wishlist button is **visible and tappable for guests**. Tapping stores a pending save via `PendingSaveService` and shows a `RegistrationGateSheet` prompting sign-up. No no-op behaviour.
+
+- **Occasion types vs. quick-select chips** *(closed 2026-07-01)*: All 8 `OccasionType` values (`birthday`, `christmas`, `wedding`, `anniversary`, `babyShower`, `graduation`, `housewarming`, `other`) are already rendered as chips on the Create Occasion screen via `_occasionIcons`. The spec's reference to "only 5" was out of date.
+
+- **Language support scope** *(closed 2026-07-01)*: `app_en.arb` and `app_es.arb` have identical coverage (469 lines each). Spanish localisation is complete for all currently implemented strings.
