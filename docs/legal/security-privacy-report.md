@@ -1,6 +1,6 @@
 # WiseGift — Security & Privacy Report
 
-**Last updated:** 2026-07-01
+**Last updated:** 2026-07-01 (H-01, H-02, H-03 resolved)
 **Scope:** Flutter client (`wisegift_flutter`), Spring backend (`wisegift-backend`), Firestore rules
 **Authors:** security-expert, privacy-legal-advisor
 
@@ -22,10 +22,10 @@ Status legend: 🔴 OPEN · 🟡 IN PROGRESS · ✅ RESOLVED
 
 | ID | Finding | Area | Status | Resolution |
 |---|---|---|---|---|
-| H-01 | Firestore rule `allow read: if true` on `users/{userId}` exposes name, email, birthday, gender, interests, and country to any unauthenticated caller. | Firestore | 🔴 OPEN | Change to `allow read: if request.auth != null`. Consider splitting document into public stub and private section. |
-| H-02 | Recommendation cache key is `name + eventType + maxBudget + country` (no user UID). Two users with the same name can receive each other's cached recommendations, computed from one user's private profile. | Backend | 🔴 OPEN | Add interests hash + relationship + UID to cache key; or use SHA-256 hash of full profile. |
-| H-03 | Third-party contact data (device contacts: name + birthday) stored in Firestore without those individuals' consent. GDPR household exemption does not apply to a commercial app syncing contacts to cloud servers. | Flutter + Firestore | 🔴 OPEN | Add explicit disclosure at contact import explaining what is stored and for how long. Implement bulk-delete path in account deletion flow. |
-| H-04 | Recipient PII (name, birthday, gender, interests) sent to OpenAI in an LLM prompt without disclosure to users. No DPA with OpenAI confirmed. No GDPR Art. 46 transfer mechanism documented. | Backend | 🔴 OPEN | Establish OpenAI DPA. Add sub-processor disclosure to privacy policy. Consider anonymising/hashing the name field in the prompt. |
+| H-01 | Firestore rule `allow read: if true` on `users/{userId}` exposes name, email, birthday, gender, interests, and country to any unauthenticated caller. | Firestore | ✅ RESOLVED 2026-07-01 | Changed to `allow read: if request.auth != null`. Sub-collection rules are independent. Public catalog rules (giftCollections, collection_stats) intentionally remain permitAll. |
+| H-02 | Recommendation cache key is `name + eventType + maxBudget + country` (no user UID). Two users with the same name can receive each other's cached recommendations, computed from one user's private profile. | Backend | ✅ RESOLVED 2026-07-01 | Replaced raw concatenation with SHA-256 hash of all 8 RecipientProfile fields via `RecipientProfileHasher`. Interests sorted before hashing for order-independence. |
+| H-03 | Third-party contact data (device contacts: name + birthday) stored in Firestore without those individuals' consent. GDPR household exemption does not apply to a commercial app syncing contacts to cloud servers. | Flutter + Firestore | ✅ RESOLVED 2026-07-01 | Disclosure notice added above import button (EN + ES). Bulk-delete already covered by `UserDeletionService` (contacts and private_birthdays sub-collections). |
+| H-04 | Recipient PII (name, birthday, gender, interests) sent to OpenAI in an LLM prompt without disclosure to users. No DPA with OpenAI confirmed. No GDPR Art. 46 transfer mechanism documented. | Backend | 🟡 IN PROGRESS | **Legal action required by Product Owner:** sign OpenAI DPA and document Art. 46 transfer mechanism. Add sub-processor disclosure to privacy policy. Code improvement (log redaction) tracked as L-05. |
 
 ---
 
