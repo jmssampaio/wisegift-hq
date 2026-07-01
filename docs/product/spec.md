@@ -361,7 +361,7 @@ As a logged-in user, I want to configure my app language, birthday reminder lead
 
 ## Open Questions
 
-1. **Notification delivery mechanism**: The notification centre reads from Firestore, but push notifications (APNs / FCM via `FirebaseMessaging`) are **not yet implemented** in the main codebase. Users only see notifications when the app is open. Decide scope before launch: in-app only, or also background push?
+None.
 
 ---
 
@@ -374,3 +374,5 @@ As a logged-in user, I want to configure my app language, birthday reminder lead
 - **Occasion types vs. quick-select chips** *(closed 2026-07-01)*: All 8 `OccasionType` values (`birthday`, `christmas`, `wedding`, `anniversary`, `babyShower`, `graduation`, `housewarming`, `other`) are already rendered as chips on the Create Occasion screen via `_occasionIcons`. The spec's reference to "only 5" was out of date.
 
 - **Language support scope** *(closed 2026-07-01)*: `app_en.arb` and `app_es.arb` have identical coverage (469 lines each). Spanish localisation is complete for all currently implemented strings.
+
+- **Notification delivery mechanism** *(closed 2026-07-02)*: Background push (FCM/APNs) is implemented. Flutter registers the device FCM token to `users/{uid}.fcmTokens` on sign-in. The Spring `user` service runs a `@Scheduled` job daily at 09:00 UTC that reads upcoming occasions per user, respects `reminderLeadTimeDays` (default 7), and sends both an FCM push and an in-app Firestore notification. Web push (VAPID) is explicitly out of scope. **Pending manual step:** APNs key must be uploaded in Firebase Console → Project Settings → Cloud Messaging before iOS push delivery works.
