@@ -53,7 +53,7 @@ are in place.
   is consistent with the side-effect rule in CLAUDE.md.
 - The **devops-expert owns the GitHub deploy workflows** (Actions), the
   environment config, and keeps the two repos' pipelines consistent. Deploy
-  changes are recorded in `docs/devops.md`.
+  changes are recorded in `docs/engineering/devops.md`.
 - Never put secrets in workflow files or branches — reference GitHub
   Actions secrets / environment variables (coordinate with security-expert).
 

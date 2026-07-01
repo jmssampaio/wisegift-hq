@@ -14,29 +14,29 @@ and especially before anything irreversible runs.
 ## Standard feature flow
 
 ### 1. Frame — functional-analyst
-Turns the product idea into a spec in `docs/spec.md`: user stories + acceptance
+Turns the product idea into a spec in `docs/product/spec.md`: user stories + acceptance
 criteria. No implementation detail. Output reviewed by the human before moving on.
 
 ### 2. Safety review (on the spec, before any build)
 - **security-expert** threat-models the feature: what could go wrong, what data
-  and auth it touches. Notes in `docs/security.md`.
+  and auth it touches. Notes in `docs/legal/security.md`.
 - **privacy-legal-advisor** flags privacy/consent/retention implications. Notes
-  in `docs/legal.md`.
+  in `docs/legal/legal.md`.
 Doing this on the *spec* (not the finished code) is the whole point — it shapes
 the design instead of forcing rework.
 
 ### 3. Core design — catalog-data-engineer + recommendations-specialist
 *(for anything touching recommendations or catalog — i.e. most features)*
 - **catalog-data-engineer** defines what catalog data/attributes the feature
-  needs and ensures the data can support it (`docs/data.md`).
+  needs and ensures the data can support it (`docs/core/data.md`).
 - **recommendations-specialist** defines the matching/ranking approach AND how
-  its quality will be measured (`docs/recommendations.md`). Evaluation is
+  its quality will be measured (`docs/core/recommendations.md`). Evaluation is
   defined *before* building, not after.
-- **uiux-expert** designs the flow and components in parallel (`docs/uiux.md`).
+- **uiux-expert** designs the flow and components in parallel (`docs/design/uiux.md`).
 
 ### 4. Architecture sign-off — human (Tech Lead)
 Confirm the API contract and data model cohere across repos. Record the agreed
-contract in `docs/architecture.md`. This is where you keep the two repos from
+contract in `docs/engineering/architecture.md`. This is where you keep the two repos from
 drifting apart.
 
 ### 5. Build
@@ -56,7 +56,7 @@ Backend contract should be settled before frontend builds against it.
 Failures go back to the relevant builder, not forward.
 
 ### 7. Release — devops-expert (human-gated)
-Code moves through the branching chain in `docs/release-process.md`:
+Code moves through the branching chain in `docs/engineering/release-process.md`:
 `feature/*` → `develop` (deploys to staging) → `main` (deploys to production).
 The devops-expert prepares branches/PRs and the deploy plan but **does not merge
 to `develop`/`main` or deploy on its own** — each merge triggers a deploy and is
@@ -64,8 +64,8 @@ an explicit human yes/no gate. (Early-days direct-to-`main` is allowed only when
 the human invokes it.)
 
 ### 8. Grow — marketing-manager
-Positioning and go-to-market in `docs/marketing.md`, based only on features that
-actually shipped per `docs/spec.md`. No invented capabilities.
+Positioning and go-to-market in `docs/growth/marketing.md`, based only on features that
+actually shipped per `docs/product/spec.md`. No invented capabilities.
 
 ## Quick paths (skip stages)
 - **Bug fix / small UI tweak:** analyst (light) → builder → QA → human. Skip
