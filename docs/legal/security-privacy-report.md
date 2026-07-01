@@ -55,7 +55,7 @@ Status legend: 🔴 OPEN · 🟡 IN PROGRESS · ✅ RESOLVED
 | L-04 | `noGiftsYet` l10n key duplicated in both `app_en.arb` and `app_es.arb` (lines 357 and 373). Duplicate JSON keys cause silent overwrites. | Flutter | 🔴 OPEN | Remove the duplicate key from both files. |
 | L-05 | Backend error logs include `recipient.name()` in the failure message (`"Failed to generate gift ideas for " + recipient.name()`). If logs are retained or shipped to a logging service, they constitute an undisclosed PII store. | Backend | 🔴 OPEN | Replace with a redacted log: `"Failed to generate gift ideas for [REDACTED]"` or log only the event type and error code. |
 | L-06 | Swagger UI (`/swagger-ui/**`, `/v3/api-docs/**`) is `permitAll` in production. API schema is publicly browsable. | Backend | 🔴 OPEN | Gate Swagger behind an environment flag (`spring.profiles.active != prod`) or require authentication. |
-| L-07 | `WebConfig.java` CORS bean in gift-recommendation module is dead code — superseded by `SecurityConfig`'s `CorsFilter`. Confusing to have two CORS configurations. | Backend | 🔴 OPEN | Delete `WebConfig.java` from the gift-recommendation module. |
+| L-07 | `WebConfig.java` CORS bean in gift-recommendation module is dead code — superseded by `SecurityConfig`'s `CorsFilter`. Confusing to have two CORS configurations. | Backend | ✅ RESOLVED 2026-07-01 | `WebConfig.java` deleted from gift-recommendation module. |
 
 ---
 
