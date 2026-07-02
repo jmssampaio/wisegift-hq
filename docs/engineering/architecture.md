@@ -1,5 +1,17 @@
 # WiseGift — System Architecture
 
+## Environments
+
+| Environment | Flutter web | Firebase project | Backend services |
+|---|---|---|---|
+| **Production** | https://wisegift.app | `wisegift` | Render — production services |
+| **Staging** | https://wisegift-staging.web.app | `wisegift-staging` | Render — staging services |
+| **Local** | `http://localhost:PORT` | `wisegift-staging` (shared) | `localhost:8080` / `8081` / `8082` |
+
+Flutter build selects the environment via `--dart-define=ENVIRONMENT=production|staging` (defaults to `local`). Backend services read `SPRING_PROFILES_ACTIVE=production|staging` from the Render environment.
+
+---
+
 ## 1. Stack
 
 | Layer | Technology |

@@ -6,6 +6,15 @@ devops-expert must follow this. workflow.md says *who* does the work; this says
 *how it gets delivered*. Both repos (`wisegift-backend` and `wisegift_flutter`)
 follow this independently — each has its own `develop`, `main`, and pipeline.
 
+## Environments
+
+| Environment | URL | Branch | Firebase project |
+|---|---|---|---|
+| Production | https://wisegift.app | `main` | `wisegift` |
+| Staging | https://wisegift-staging.web.app | `develop` | `wisegift-staging` |
+
+---
+
 ## Branch model
 
 - `main` — production. Always deployable. Only updated via promotion from
