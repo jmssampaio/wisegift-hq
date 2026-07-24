@@ -17,7 +17,7 @@ Status legend: 🔴 OPEN · 🟡 IN PROGRESS · ✅ RESOLVED
 | C-03 | No privacy policy link, no terms of service, no consent checkbox at any point in the registration flow. Violates GDPR Art. 13, CCPA, and App Store/Play Store mandatory requirements. | Flutter | ✅ RESOLVED 2026-07-01 | Consent checkbox added to registration step 3. Submit button disabled until accepted. Links to `https://wisegift.app/privacy` and `https://wisegift.app/terms` (placeholder URLs — real documents still needed). |
 
 ---
-
+0 er
 ## HIGH
 
 | ID | Finding | Area | Status | Resolution |
@@ -61,12 +61,12 @@ Status legend: 🔴 OPEN · 🟡 IN PROGRESS · ✅ RESOLVED
 
 ## UNKNOWNS — Require Direct Investigation
 
-| ID | Item | Owner |
-|---|---|---|
-| U-01 | Firebase / Google DPA and Standard Contractual Clauses (SCCs) for EU-to-US transfers — has this been signed in Firebase console? | Product Owner / Legal |
-| U-02 | OpenAI Data Processing Agreement — does one exist? | Product Owner / Legal |
-| U-03 | RevenueCat DPA — does one exist? | Product Owner / Legal |
-| U-04 | `favouriteBrands` field exists in `AppUser` entity but no collection UI was found. Is it actively collected anywhere? | Frontend |
-| U-05 | Redis access controls — is authentication and encryption at rest enabled on the Redis instance? | DevOps |
+| ID | Item                                                                                                                                                         | Owner |
+|---|--------------------------------------------------------------------------------------------------------------------------------------------------------------|---|
+| U-01 | Firebase / Google DPA and Standard Contractual Clauses (SCCs) for EU-to-US transfers — has this been signed in Firebase console?                             | Product Owner / Legal |
+| U-02 | OpenAI Data Processing Agreement — does one exist?                                                                                                           | Product Owner / Legal |
+| U-03 | RevenueCat DPA — does one exist?                                                                                                                             | Product Owner / Legal |
+| U-04 | `favouriteBrands` field exists  in `AppUser` entity but no collection UI was found. Is it actively collected anywhere?                                       | Frontend |
+| U-05 | Redis access controls — is authentication and encryption at rest enabled on the Redis instance?                                                              | DevOps |
 | U-06 | Backend application logs — are they retained, rotated, shipped to a third-party logging service? If so, they constitute an undisclosed PII store (see L-05). | DevOps |
-| U-07 | `internal.token` property — is it set in the production deployment environment? | DevOps |
+| U-07 | `internal.token` property — is it set in the production deployment environment?                                                                              | DevOps |

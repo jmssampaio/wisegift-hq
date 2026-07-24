@@ -42,7 +42,7 @@ everything else supports them.
 - `devops-expert` — CI/CD, deployment, env config across both repos (docs/devops.md)
 
 **Growth**
-- `marketing-manager` — positioning & go-to-market (docs/marketing.md)
+- `marketing-` — positioning & go-to-market (docs/marketing.md)
 
 ## Source of truth (read the relevant ones before acting)
 - `docs/product/spec.md` — what we're building + acceptance criteria
@@ -68,10 +68,11 @@ everything else supports them.
 - The **catalog-data-engineer owns data shape/quality**; backend serves it; the
   **recommendations-specialist owns matching and must define how quality is
   measured** before building.
-- **Code changes target the `develop` branch first** via a `feature/*` branch
-  and PR, never `main` directly — see `docs/engineering/release-process.md`. Merging to
-  `develop` or `main` triggers a deploy and is human-gated. (Early-days direct
-  pushes to `main` are allowed only when the human explicitly invokes them.)
+- **All code changes target `develop` via a `feature/*` branch and PR. Never
+  open a PR against `main` and never push to `main` directly.** Promotion of
+  `develop` → `main` is a separate human-owned PR that ships production. See
+  `docs/engineering/release-process.md`. Merging to either branch triggers a
+  deploy and is human-gated.
 - Never mark work "done" — recommend; the human validates.
 - Flag ambiguity, risk, and tradeoffs to the human rather than guessing.
 - **Side-effectful actions require explicit human approval** before running:
