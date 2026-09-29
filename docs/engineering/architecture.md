@@ -26,17 +26,17 @@ Backend selects environment via `SPRING_PROFILES_ACTIVE=production|staging|local
 | Layer | Technology | Notes |
 |---|---|---|
 | Embeddable widget | Preact + Web Components, Shadow DOM | ≤ 50 KB gzipped, async, CDN-served |
-| Merchant admin dashboard | React or Next.js (TBD at first frontend PR) | Session auth, same-origin API calls |
+| Merchant admin dashboard | Next.js (App Router) | Session auth, same-origin API calls. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 | Backend | Spring Modulith (Java) | Hexagonal per module; evolved from `wisegift-backend` |
 | Recommendation LLM | Anthropic Claude via API | Haiku 4.5 default; Sonnet escalation behind per-tenant flag |
-| Embeddings | Anthropic or OpenAI (TBD at first ingestion PR) | Stored in pgvector, model version tracked per vector |
+| Embeddings | OpenAI `text-embedding-3-small` (1536d, Matryoshka-reducible) | Stored in pgvector, model version tracked per vector. EU covered via OpenAI DPA. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 | Primary DB | PostgreSQL + pgvector (Neon EU) | Shared multi-tenant, `tenant_id NOT NULL` |
 | Cache + rate limits | Redis (managed, EU) | Response cache, per-tenant usage cap, per-session rate limit, kill switch |
 | Platform integrations | Shopify Admin API + Theme App Extensions | MVP; VTEX / SFCC / custom REST post-MVP behind common adapter |
 | Widget CDN | Cloudflare or Fastly | Long TTL + hash-based cache-busting |
 | Hosting | Render EU (backend + admin) | Widget CDN separate |
 | Observability | Structured JSON logs, per-tenant cost telemetry stream | Alerting on daily-spend threshold per tenant |
-| Identity — merchant admin | Email + password + Google OAuth | Provider library TBD; MVP is single-user per tenant, no SSO |
+| Identity — merchant admin | Email + password + Google OAuth (Spring Security + BCrypt) | MVP is single-user per tenant, no SSO, no MFA. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 | Identity — widget shopper | None (anonymous session ID) | No PII, session ID in localStorage |
 | Identity — widget → API | Short-lived HMAC-signed request tokens (rotates hourly) | Token-issuing endpoint scoped to merchant domain allowlist |
 | Identity — Shopify → API | OAuth (per-tenant tokens) + HMAC on webhooks | Standard Shopify pattern |
@@ -204,7 +204,7 @@ Cost guardrails from `docs/growth/gtm-b2b.md` are engineering requirements, not 
 | Response cache | Redis, 24h TTL | Hit rate target > 60% at steady state |
 | Session rate limit | Redis counter `rate:{session_id}:{YYYY-MM-DD-HH}` | Max 20 live-LLM calls / session / hour |
 | Kill switch | Redis flag `kill:{tenant_id}` (bool + reason) | Daily-spend threshold from cost telemetry; ops-alert; auto-set true |
-| Cost telemetry | Streamed to metrics store (details TBD — Prometheus / OpenTelemetry) | Every rec call, unsampled |
+| Cost telemetry | Postgres `cost_telemetry` table at MVP; promote to Grafana Cloud EU post-MVP | Every rec call, unsampled. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 
 Kill switch behaviour: while set, every recommendation call serves from precomputed cold recs. Widget shopper cannot tell. Ops dashboard shows the tenant in "degraded" state until manually reset.
 
@@ -272,6 +272,7 @@ Holds both the OAuth material and the platform-side identity of the merchant. On
 | platform | VARCHAR(16) | `shopify` (MVP), later `vtex`, `sfcc` |
 | platform_shop_domain | VARCHAR(255) | Merchant's identifier on the source platform. Shopify: `merchant.myshopify.com`. VTEX: account name. SFCC: realm host. Unique per `(platform, platform_shop_domain)` |
 | platform_shop_id | VARCHAR(64) | Platform-native numeric or opaque ID as string (Shopify shop_id, VTEX account_id, SFCC organization_id). Stringly-typed so post-MVP platforms with non-numeric IDs land cleanly |
+| custom_domain | VARCHAR(255) | Nullable. Merchant's storefront domain if configured (e.g. `shop.example.com`). Populated from Shopify Admin API `GET /shop.json → primary_domain` at OAuth completion; refreshed on `shop/update` webhook or nightly reconciliation. Widget request-origin allowlist = `[platform_shop_domain, custom_domain].filter(non-null)`. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 | oauth_access_token_encrypted | TEXT | Encrypted at rest; decrypted only in memory for the outbound call |
 | scopes | TEXT[] | Granted OAuth scopes |
 | installed_at | TIMESTAMPTZ | |
@@ -310,8 +311,8 @@ Per-tenant catalog snapshot. One row per Shopify product per tenant.
 | tags | TEXT[] | Shopify tags |
 | available | BOOLEAN | True if any variant in stock |
 | content_hash | VARCHAR(64) | SHA-256 of title+description+type+tags; drives embed recompute decision |
-| embedding | vector(1536) | pgvector; nullable while awaiting first embed pass |
-| embedding_model_version | VARCHAR(32) | e.g. `voyage-3-lite`; nullable if embedding is null |
+| embedding | vector(1536) | pgvector; nullable while awaiting first embed pass. 1536d matches OpenAI `text-embedding-3-small` |
+| embedding_model_version | VARCHAR(32) | e.g. `text-embedding-3-small`; nullable if embedding is null |
 | last_seen_at | TIMESTAMPTZ | Updated on catalog sync + webhook |
 | last_embedded_at | TIMESTAMPTZ | Nullable |
 
@@ -363,7 +364,7 @@ Composite PK `(tenant_id, version)`.
 |---|---|---|
 | tenant_id | UUID | PK |
 | hook_copy | TEXT | Localised strings by lang |
-| brand_accent_color | VARCHAR(7) | Hex. Superseded by `theme_tokens.accent_color`; kept for backward-shape reasons and read as a second-level fallback. Consolidation TBD at the tenant-module PR |
+| brand_accent_color | VARCHAR(7) | Hex. Superseded by `theme_tokens.accent_color`; kept for backward-shape reasons and read as a second-level fallback. Asymmetry is intentional for MVP — consolidation deferred to a v2 shape pass |
 | border_radius_px | INTEGER | Reused by the theming pathway as the source of `--wg-border-radius`; not duplicated inside `theme_tokens` |
 | recs_per_widget | INTEGER | 3–10 |
 | placements_enabled | TEXT[] | e.g. `["home_hero", "pdp_slot", "gift_finder"]` |
@@ -661,9 +662,7 @@ Shopify auto-inheritance requires no special widget code. The Theme App Extensio
 
 Bundle-budget implication: all theming logic (token application + preset tables + host-style write) must fit within **< 1 KB gzipped**. This is a hard sub-budget against the overall 50 KB widget budget. Enforced by inspecting the theming module's minified size in CI when the widget-bundle assertion runs.
 
-Open items ("TBD at first widget PR"):
-- Whether `theme_tokens` is served with the widget bootstrap payload from `POST /widget/v1/session` or as a separate `GET /widget/v1/config` call cached at CDN edge.
-- Whether preset tables live in the core widget bundle or a lazily-fetched theme chunk (only justified if the < 1 KB budget is breached).
+Delivery: `theme_tokens` ship with the widget bootstrap response from `POST /widget/v1/session` — one round trip, protects the 100 ms TTI budget. Preset tables (`SPACING_SCALES`, `CARD_SHADOWS`) live inline in the core widget bundle; the theming module fits comfortably under the < 1 KB sub-budget (400–600 B estimated), so a lazy chunk is not justified. See `decisions.md` 2026-09-29 "Architecture open questions closed".
 
 ---
 
@@ -740,14 +739,7 @@ The `wisegift-backend` Spring codebase carries real patterns worth keeping. This
 
 ## 14. Open questions
 
-- **Embedding provider**: Anthropic embeddings not GA at write time; OpenAI `text-embedding-3-large` or Voyage embeddings likely. Decide at first ingestion PR. Impact: embedding vector dimensionality.
-- **Admin auth library**: roll our own (Spring Security + password + Google OAuth) vs. adopt Clerk / Auth.js / Firebase Auth (reusing the existing setup). Roll-our-own keeps the surface minimal; managed provider is faster to ship. Decide at first admin PR.
-- **Admin frontend framework**: React (Vite) or Next.js. Next.js buys server-rendered pages for onboarding SEO; React SPA is simpler. Decide at first admin PR.
-- **Cost telemetry destination**: Prometheus + Grafana (self-hosted, EU) vs. a managed observability vendor (must be EU-region + DPA). Decide at first devops PR.
-- **Widget → API tokens**: JWT-like HMAC vs. Shopify session tokens (if App Bridge is used). Shopify's App Bridge tokens are elegant but tie us more to Shopify; the JWT-HMAC approach ports cleanly to VTEX / SFCC later. Leaning JWT-HMAC.
-- **Order-session correlation**: cart attribute vs. URL query param vs. both. Both is safer. Confirm which the Theme App Extension supports without merchant theme customisation.
-- **Anonymous session ID and EU consent**: some regimes require explicit consent even for a first-party session identifier. Route to `security-and-privacy` for legal posture before first pilot.
-- **Merchant domain allowlist source**: read from the tenant's Shopify shop domain (`*.myshopify.com` + custom domain if configured) — how do we get the custom domain reliably at install? Shopify Admin API `GET /shop.json` returns `primary_domain`.
+*(No MVP-scope architecture questions currently open. The eight items previously listed here were resolved on 2026-09-29 — see `docs/decisions.md` "Architecture open questions closed". New items land here; resolved ones move to `decisions.md`.)*
 
 ---
 
