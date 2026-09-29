@@ -256,6 +256,7 @@ Platform-agnostic. The identifiers a merchant carries on their source platform (
 | monthly_usage_cap | INTEGER | Live-LLM recommendation calls / month; default 50000 |
 | daily_spend_cap | NUMERIC(10,2) | Nullable. NULL = fall through to per-plan constant. Set explicitly only for pilots with custom headroom or outlier tenants. See `decisions.md` 2026-09-29 "Resolved 6 open questions" |
 | feature_flags | JSONB | Per-tenant boolean flags (e.g. `{"sonnet_escalation": true}`). Starts as `{}`. See `decisions.md` 2026-09-29 |
+| consent_mode_required | BOOLEAN | Default `false`. When `true`, the widget always operates in consent-gated mode regardless of the shopper's Shopify Customer Privacy signal — no localStorage write, no session ID, no event emission, holdout falls back to per-request coin flip with `attribution_mode=degraded`. Flipped by support for merchants in stricter DPA jurisdictions (typically DE, IT). See `decisions.md` 2026-09-29 "Widget consent for EU" |
 | active | BOOLEAN | `false` until onboarding wizard completes |
 | soft_deleted_at | TIMESTAMPTZ | Nullable |
 | created_at | TIMESTAMPTZ | |
