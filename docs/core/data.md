@@ -149,16 +149,23 @@ shared with a small guard that pauses per-tenant fetch when the fleet-wide
 error rate on `429` climbs. Details of the throttle live in the ingestion
 PR, not this doc.
 
-### Open behaviour to decide with the PO
+### Deactivation policy (settled 2026-09-29)
 
-- **How aggressively do we deactivate on missed `last_seen_at`?** Nightly
-  reconciliation is the authoritative catalog snapshot; a product not seen
-  for N consecutive nightly runs is a candidate for deactivation. The
-  archived B2C doc used 2 consecutive misses. For B2B, where a merchant
-  can pause syncing (uninstall, plan pause), a stricter threshold risks
-  false-positive deactivation. **TBD at the first ingestion PR** — default
-  proposal: mark `available=false` after 2 consecutive misses, do not
-  delete the row.
+A product is marked `available=false` after **2 consecutive successful
+reconciliation runs** in which the product was not observed. A run is
+"successful" only if `catalog_sync_runs.status='ok'` and
+`products_seen_count` is within ±10 % of the last known catalog size.
+Failed or partial runs are no-ops for this counter — a crashed nightly
+job or a Shopify 5xx cannot self-inflict a fleet-wide deactivation.
+
+Deactivated rows remain in the DB; the §7 30-day soft-delete window
+governs hard removal.
+
+`catalog_sync_runs` is a small operational table
+(`tenant_id`, `started_at`, `finished_at`, `status`, `products_seen_count`,
+`pages_fetched`) written once per reconciliation run. It also backs the
+webhook-health indicator in the admin sync-status panel (`spec.md` →
+Merchant admin → Catalog sync controls).
 
 ---
 
@@ -207,8 +214,11 @@ Four event types emitted from day one:
   placement.
 - `widget_engaged` — the shopper interacted with the hook or the intent
   form.
-- `intent_submitted` — the intent form was submitted (payload described by
-  the tenant's active `intent_form_schema` version — see §8).
+- `intent_submitted` — the intent form was submitted. Carries an explicit
+  `intent_form_schema_version` column on the event row (settled 2026-09-29)
+  so the v2 learning loop can read historical payloads across schema
+  upgrades without a backfill. Payload shape described by the tenant's
+  active `intent_form_schema` — see §8.
 - `product_clicked` — a recommendation card was clicked; carries the
   clicked `shopify_product_id`, its `rank_score`, and the `served_from`
   echoed from the rec response.
@@ -417,12 +427,13 @@ Why Redis and not the DB: these are read on every rec call inside the
 trip on the hot path is out.
 
 Durable state that shapes the guardrails lives on the tenant record:
-`plan`, `monthly_usage_cap`, and (implicitly) the per-plan daily-spend
-threshold that maps to `kill_switch` behaviour. The daily-spend threshold
-itself is not stored per-tenant at MVP — it is a per-plan constant,
-resolved at check time. **Open question**: if a pilot tenant needs a
-custom threshold different from their plan default, we need a column.
-Not urgent — flag when a pilot asks.
+`plan`, `monthly_usage_cap`, and a nullable `daily_spend_cap` column
+(settled 2026-09-29). `daily_spend_cap` is NULL by default and falls
+through to the per-plan constant at check time; support sets it
+explicitly only when a pilot merchant needs custom headroom or an
+outlier tenant needs a bespoke cap. No runtime lookup complexity —
+NULL means "use plan default." The per-plan constants themselves are
+still TBD at first pilot.
 
 The kill switch flip is a P0 alert to ops. Recovery is manual by design:
 the widget stays live serving precomputed recs (shopper cannot tell) and

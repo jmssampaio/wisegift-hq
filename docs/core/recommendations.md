@@ -169,10 +169,12 @@ Per tenant:
   descriptive dimension survives. Coordination point with catalog engineer:
   reject catalogs at ingest where median description length is below a
   threshold (see `data.md`).
-- **Small catalogs** — tenants with <100 active SKUs produce shallow rec
-  slates. Below-threshold catalogs at ingest should trigger an admin warning
-  ("catalog too small for personalisation quality"). **Threshold TBD** — likely
-  around 100 SKUs based on ICP; confirm at first pilot.
+- **Small catalogs** — pilot floor is **200 SKUs** (settled 2026-09-29).
+  Below 200 the widget is re-shuffling near-everything and lift is
+  unmeasurable — polite decline for pilot. Pilots between 200 and 500 SKUs
+  ship with an internal flag "limited lift-measurement power" so the case
+  study does not over-promise significance. Well below the ICP floor of
+  1k SKUs, which keeps the pilot pool wide.
 - **Category imbalance within a tenant** — a fashion tenant whose catalog is
   90% dresses will over-return dresses regardless of intent. The category
   diversity heuristic caps this at slate level, but the tenant should surface
@@ -243,7 +245,7 @@ of the cache key, not the signature.
 Open question: **how aggressively to bucket interests**. Stemming? Synonym
 collapse? Free-text field carries meaningful signal but also creates cache
 fragmentation. MVP: no stemming, just normalise. Revisit at first pilot if
-cache hit rate is below the 60% target.
+cache hit rate falls outside the operating band (see §4.5).
 
 ### 4.3 Real intent — the definition
 
@@ -267,6 +269,18 @@ subsequent requests serve from cache (if hot) or precomputed. The cap is
 generous — a shopper who genuinely re-tunes intent 20 times in an hour is
 edge-case; anything higher is likely bot traffic that would otherwise drain
 budget.
+
+### 4.5 Cache hit-rate target (settled 2026-09-29)
+
+**Design target 60 %.** Operating band **40 %–85 %**, not an SLA.
+
+- Below 40 % → cost is blowing up; investigate signature granularity or
+  cache TTL, or check for cache-key drift in the widget.
+- Above 85 % → recs may be stale; the signature is probably too coarse
+  (e.g. interests bucketing is collapsing meaningful nuance).
+
+Reported hourly in cost telemetry, per tenant. Not a customer-facing
+number. Tunable during pilots.
 
 ---
 
@@ -355,12 +369,15 @@ MVP policy:
   - Merchant is on the Scale or Enterprise tier (pricing structure funds it), or
   - A pilot merchant has demonstrated CTR / revenue-per-session lift below
     target on Haiku and Sonnet-vs-Haiku is being A/B tested as a lift lever.
-- **Scope**: per tenant, not per request. Sub-tenant scoping (e.g. Sonnet only
-  for gift-intent flows with 5+ interests) is possible via the same flag
-  mechanism but **not designed in MVP** — flag is boolean per tenant.
-- **Flag storage**: `tenants.feature_flags` JSONB (schema TBD at first tenant
-  module PR, currently the schema in `architecture.md` §8 doesn't have this
-  column yet — flagged below).
+- **Scope**: boolean per tenant, not per request (settled 2026-09-29).
+  Per-flow override (gift-intent on Sonnet, self-intent on Haiku) is the
+  natural next lever and maps cleanly to a Growth-tier pricing story, but
+  it depends on pilot data showing Sonnet gives meaningfully better gift
+  recs — we don't have that yet. Ship boolean now; unbundle to per-flow
+  once one pilot shows a clear Sonnet lift on gift intent.
+- **Flag storage**: `tenants.feature_flags` JSONB. Consequence of the
+  above decision: `architecture.md` §8 tenant schema needs this column
+  added in the first tenant-module PR — it is now required, not optional.
 
 ### 6.2 Model version pinning
 
@@ -477,37 +494,27 @@ To keep the surface reviewable and to avoid re-litigating settled scope:
 
 ## 10. Open questions for PO validation
 
-Called out inline above; consolidated here:
+Three inline questions were settled on 2026-09-29 (cache hit-rate target §4.5,
+pilot catalog floor §3.3, Sonnet scope §6.1). Three sibling questions on the
+data-model side were settled the same day in `data.md`. Remaining open items:
 
-1. **Cache hit rate target of 60%+** — is that acceptable, given it means up to
-   40% of engaged requests go live to Claude? Alternative is a coarser
-   intent signature (bucket interests harder) that raises hit rate but
-   collapses more nuance. Trade-off is quality vs cost. Currently biased
-   toward quality — confirm.
-2. **Threshold for "catalog too small for personalisation"** — I've suggested
-   ~100 SKUs but this is a guess. What's the smallest catalog we want to say
-   yes to in a pilot?
-3. **Sonnet escalation policy** — per-tenant boolean flag is what
-   `architecture.md` says. Should there be a **per-flow** override
-   (e.g. Sonnet only for gift-intent, Haiku for self)? That's more nuanced and
-   more expensive to build; MVP proposes boolean-per-tenant only.
-4. **Daily-spend threshold defaults per plan tier** — pilot default of
-   `monthly_cap / 30 × 1.5` is a reasonable starting point but not derived
-   from data. What's the PO's ceiling for a single bad day on a pilot tenant
-   before ops intervenes?
-5. **Significance-test choice** — z-test for rate KPIs and Welch's t on log-
-   revenue is my proposal. Any preference from PO or is this fine for the
-   dashboard team to lock in at the first analytics PR?
-6. **Merchant-facing kill-switch banner copy** — needs marketing review.
+1. **Daily-spend threshold defaults per plan tier** — the settled shape is a
+   nullable `daily_spend_cap` column (see `data.md` §10) with NULL falling
+   through to a per-plan constant. The per-plan constants themselves are
+   still open. Pilot default of `monthly_cap / 30 × 1.5` is a reasonable
+   starting point but not derived from data. Confirm at first pilot.
+2. **Significance-test choice** — z-test for rate KPIs and Welch's t on
+   log-revenue is my proposal. Fine to lock in at the first analytics PR
+   unless PO prefers a different family.
+3. **Merchant-facing kill-switch banner copy** — needs marketing review.
    Suggested language above is placeholder.
-7. **`tenants.feature_flags` column** — needed for the Sonnet flag and any
-   future per-tenant experiment toggles. Not in `architecture.md` §8 today.
-   Flag to add in the first tenant-module PR, or open a specific decision
-   entry?
-8. **Offline eval regression margin** — I don't want to pick a threshold
-   without at least one calibration run. Propose: land the fixture set +
-   harness first, run it against the initial ranker, then set the margin
-   from observed variance. Confirm approach.
+4. **Offline eval regression margin** — no calibration data yet. Propose:
+   land the fixture set + harness first, run it against the initial
+   ranker, then set the margin from observed variance. Confirm approach.
+
+Consequence of the Sonnet decision (§6.1): `tenants.feature_flags` JSONB
+column must be added to `architecture.md` §8 and to the first
+tenant-module PR. Not optional.
 
 ---
 
