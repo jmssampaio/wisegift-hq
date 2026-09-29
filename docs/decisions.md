@@ -295,6 +295,94 @@
   - No backend code exists yet, so this is purely a docs change. The first backend PR reading tenant identity will pick up the new shape from `architecture.md` directly.
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-29 — Language coverage: EN/ES/PT for MVP; DE/FR/IT deferred to per-pilot demand
+- Context: `spec.md` open question flagged whether widget copy needed DE / FR / IT before a first non-Iberian pilot. PO answered directly.
+- Decision: MVP ships widget copy in EN, ES, PT only. DE / FR / IT are added per-signed-pilot on demand (one merchant asking = one translation pass), not preemptively. Rationale: pilot pool is EU merchants — ES/PT initially, UK/DE eventually. EN covers the UK case. Preloading translations we might never use burns setup time better spent on pilots. Widget copy strings live in a small locale bundle; adding a new locale is a matter of translating ~30 strings + one config value, not a code change.
+- Rejected: preemptive DE / FR / IT — no signal on which of the three is needed first; wasted effort until a specific pilot signs.
+- Follow-up: closed the item in `spec.md` Open questions → moved to Resolved with rationale inline.
+- Made by: Product Owner
+
+## 2026-09-29 — Custom-app pilot billing: public-app billing throughout, Stripe as safety net
+- Context: Pilots install as **custom apps** in Shopify (per the Frozen MVP scope entry) — fast pilot start, no App Store review needed. But Shopify's App Store billing API is unavailable to custom apps, so we need a plan for what happens when the first pilot converts to paid at day 90. Two paths were on the table.
+- Decision: **Path B — public-app billing throughout, with Stripe as a safety net.** Submit the widget to Shopify App Store review at day 60 of the first pilot so approval (typical window 4–8 weeks) lands by day 90 when the first conversion happens. Pilots re-install as public app at conversion — one small friction moment, then a single billing system for the merchant lifecycle. **Stripe safety net:** if App Store review is not approved by day 90 (review runs long OR a specific pilot converts early), spin up a minimal Stripe integration for that specific pilot only, and migrate them to public-app billing once review lands.
+- Rejected alternatives:
+  - **Path A — Stripe for pilots + migration later.** Builds Stripe engineering now for a use case that might not materialise (if App Store review lands on time, we never need Stripe). Dual-track billing state is a maintenance tax.
+  - **Bill pilots directly through invoice/manual.** Too much ops overhead per pilot; doesn't scale beyond the initial cohort and gives a bad post-pilot conversion experience.
+- Consequences:
+  - **`devops-expert` planning item:** App Store submission must be ready to file by day 60 of the first pilot. Assets (icon, screenshots, listing copy, data-processing summary, privacy policy link) need to exist by then. This becomes a hard date on the pilot timeline.
+  - Stripe integration is a **contingency**, not a build item. Build only if the "review not approved by day 90" trigger fires.
+  - Merchant-facing re-install at conversion is a real UX moment — the onboarding wizard needs a "welcome back, install the public app" path that migrates tenant state cleanly. Track this as a known gotcha for `product-analyst` when the conversion flow is designed.
+- Made by: Product Owner (advised by claude)
+
+## 2026-09-29 — Merchant data export SLA: support-only at MVP, self-serve as Enterprise post-MVP
+- Context: Merchants may occasionally ask for a raw export of their tenant's event data (widget events, attributed orders) — data-savvy merchants, compliance-driven requests, or Enterprise contracts. Question was whether to build a self-serve export at MVP.
+- Decision: **Support-only manual export at MVP.** Process: merchant emails support with an export request; we run a manual query against Postgres for `events`, `sessions`, `orders_attributed` scoped to their `tenant_id`; deliver a JSONL file via signed URL (S3 or Neon-hosted) with a 5-business-day SLA. Self-serve export is deferred to a post-MVP Enterprise-tier feature, triggered when a real merchant asks (not before).
+- Format specifics: **JSONL** (one event/row per line, `platform_product_id` and other IDs as strings). Includes events + attributed orders + intent-form-schema-version-tagged intent payloads. No PII (there is none on our side to include).
+- Rejected alternatives:
+  - **Self-serve export UI at MVP.** Premature; no merchant has asked. Build costs (admin screen, background job, S3 signed URLs, rate limiting) not justified without demand signal.
+  - **Scheduled recurring exports (weekly S3 drop).** Same premature-build concern; also raises questions about egress cost and long-term storage that we don't need answers to yet.
+  - **Refuse the ask entirely.** Some Enterprise contracts will require it; refusing loses deals.
+- Consequences:
+  - `backend-engineer` follow-up: a small internal-admin path or CLI to run a tenant-scoped export query cleanly. Not merchant-facing; runs support-side. Not required for pilot launch but useful within 90 days.
+  - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
+- Made by: Product Owner (advised by claude)
+
+## 2026-09-29 — Widget consent for EU: no Consent Mode integration at MVP; ship escape hatch
+- Context: Spec had an open question on whether WiseGift's widget needed a cookie-consent integration on day one. GDPR + ePrivacy Directive Art. 5(3) requires prior consent for storing information on a user's terminal equipment unless it is "strictly necessary for the provision of an information-society service explicitly requested by the user." Our widget stores a first-party UUID in localStorage for attribution + holdout assignment — the exact grey zone.
+- Decision:
+  1. **Ship without Consent Mode integration at MVP.** Our data flow — first-party UUID, no PII, no cross-site tracking, 30-day sliding TTL, EU-only hosting, never linked to the merchant's customer DB — sits inside the CNIL-line "strictly-necessary measurement" reading of ePrivacy Art. 5(3). GDPR Art. 6(1)(f) legitimate interests is the belt-and-braces basis. Position paper at `docs/legal/consent-position.md` is the artefact we hand to pilot DPOs when asked.
+  2. **Ship the escape-hatch code path from day one.** The widget reads `window.Shopify.customerPrivacy.currentVisitorConsent()` at bootstrap. Three states: (a) consent granted or unknown-in-permissive-jurisdiction → mint UUID, write localStorage, deterministic holdout, emit events; (b) consent denied → no localStorage write, no `wg_session` identifier, no event emission; recs still fetch server-side, holdout falls back to a per-request coin flip, backend records `attribution_mode=degraded` for honest reporting; (c) consent changes mid-session → widget re-reads on `visitorConsentCollected`, mints from that point forward, no retroactive backfill.
+  3. **Per-tenant `consent_mode_required BOOLEAN` on the tenant record** (default `false`). Lets support flip a stricter merchant into fallback-always without a code change. New column landing in a follow-up architecture.md §8 pass.
+- Rejected alternatives:
+  - **Ship Consent Mode integration as default.** Blocks 90 % of the pilot pool (CNIL-line jurisdictions) from getting attribution data with no incremental privacy benefit. Also adds bootstrap latency against the 100 ms TTI budget.
+  - **Document the escape hatch but don't ship the code.** The residual risk is exactly the case where we need to ship in a hurry — if the first German pilot's DPO asks on day 3, we cannot bolt this on. Ship it now.
+  - **Set the session ID server-side.** Doesn't help — an identifier is an identifier under ePrivacy regardless of where it originates; the trigger is storage on the user's device.
+- Key DPA-specific risk flagged: **Germany (LfDI Baden-Württemberg / DSK)** reads first-party analytics identifiers as consent-required regardless of cross-site scope — stricter than CNIL. First DE pilot's DPO likely to require Consent Mode from day one. Italy's Garante is the second-most-likely to push back. Both mitigated by the shipped escape hatch (flip `consent_mode_required=true` on the tenant, done).
+- Consequences:
+  - **New column** `tenants.consent_mode_required BOOLEAN DEFAULT false` — must land in `architecture.md` §8 in the next schema pass.
+  - **Backend behaviour:** the rec API accepts requests with no session ID (falls back to per-request holdout coin flip); the events API rejects events with no session ID (nothing to correlate).
+  - **`security-and-privacy` follow-up:** fold `docs/legal/consent-position.md` into the eventual DPA template. Also ensure the sub-processor list stays honest — Anthropic (rec calls), Neon (data), Redis provider, hosting (Render), CDN (Cloudflare/Fastly) — all EU regions per Frozen MVP.
+  - **Not a substitute for attorney sign-off** before a paying merchant contract — `security-and-privacy` is informational only per CLAUDE.md. Route binding legal questions to a qualified DPA-specialist attorney.
+- Made by: Product Owner (advised by security-and-privacy, claude)
+
+## 2026-09-29 — App Store category: Marketing → Upselling & Cross-selling (primary), Store Design → Product Discovery (secondary)
+- Context: Spec had an open question on where to list the WiseGift widget in the Shopify App Store. Category placement drives organic discovery — mid-market Shopify merchants search inside categories more than they search the App Store globally, so category choice materially affects pilot acquisition velocity post-launch.
+- Decision:
+  1. **Primary category: Marketing → Upselling & Cross-selling.** This is where our ICP (mid-market Shopify merchants chasing revenue-per-session lift) searches when they need something like us. Competitive — Rebuy, LimeSpot, Nosto, Wiser, ReConvert all live here — but the crowd is where the budget is. Losing search-intent match to escape competition trades a real acquisition problem for a differentiation problem we can solve inside the listing body.
+  2. **Secondary category (if App Store rules permit): Store Design → Product Discovery.** Second organic entry for the "gift finder" mental model; genuinely matches the dedicated gift-finder-page placement in `spec.md`. Whether Shopify's current partner-dashboard rules allow a primary + one secondary is **TBD at submission time** — if only one slot is available, stay in Marketing (Product Discovery alone underplays the revenue story the pricing tiers depend on).
+  3. **Positioning inside the listing: lead with "AI recommendations that also do gifts."** Chosen over "gift finder" positioning to keep addressable use year-round rather than capping to 3–4 gifting seasons. Differentiator (gift-intent hook) lives in the description body, not the category selection.
+  4. **Keywords, tagline, and short description** drafted in `docs/growth/app-store-listing.md`. `marketing-manager` owns updates when pilot data starts producing lift numbers to fold into the tagline.
+- Rejected alternatives:
+  - **Primary in Store Design → Product Discovery.** Cleaner differentiation but wrong search-intent match for our ICP. Also caps the addressable use case optically.
+  - **Skip category listing, rely on cold outreach + Design Partner Program.** Works during pilot phase but leaves free organic acquisition on the table post-App-Store-approval.
+- Consequences:
+  - **App Store listing assets** (icon, screenshots, listing copy, privacy policy link, data-processing summary) become part of the day-60-of-first-pilot deliverable per the Custom-app pilot billing entry above.
+  - **`marketing-manager` follow-up:** update `docs/growth/app-store-listing.md` with real lift numbers once the first pilot completes its 90-day cycle. The tagline and description should carry a merchant-verifiable claim, not internal projection.
+- Made by: Product Owner (advised by marketing-manager, claude)
+
+## 2026-09-29 — Widget theming: two-layer model (Shopify auto-inherit + merchant design tokens)
+- Context: The Frozen MVP scope entry pinned Shadow DOM isolation for widget CSS (safety — widget can never break the merchant's theme) but that also means the widget cannot inherit merchant styling by default. The existing `widget_config` table exposed only `brand_accent_color` and `border_radius_px` — roughly zero personalisation. PO surfaced the concern: for Shopify, the widget "should keep more or less the look and feel of the merchant". Without a theming answer, every widget looks like a generic WiseGift widget dropped into the storefront — a trust and conversion problem.
+- Decision: two-layer theming model, targeted at Shopify for MVP with a platform-agnostic fallback for VTEX / SFCC.
+  1. **Layer 1 — Shopify auto-inheritance (zero merchant config).** CSS custom properties cross Shadow DOM boundaries by design. The widget's internal CSS references standard Shopify Theme Editor variables via `var()` with WiseGift defaults as the fallback: `color: var(--wg-accent-color, var(--color-accent, #6c47ff))`. Modern Shopify themes (Dawn and derivatives) expose `--color-accent`, `--color-foreground`, `--color-background`, `--font-body-family`, `--font-heading-family` — the widget picks them up automatically without any admin configuration. Merchants on themes that don't expose them fall through to layer 2 or the WiseGift default.
+  2. **Layer 2 — Merchant design-token overrides.** A small set of tokens the merchant can set explicitly in the admin dashboard. Stored in `widget_config.theme_tokens` JSONB, nullable, defaults `{}` — only explicit overrides live there. At widget mount, non-null tokens are applied as `--wg-*` CSS custom properties on the host element via inline `<style>`, taking precedence in the `var()` fallback chain. Token list (8 total): `accent_color`, `text_color`, `background_color`, `font_family`, `heading_font_family`, `border_radius_px` (reuses existing column, not duplicated in JSONB), `spacing_scale` (preset enum `compact | cozy | roomy`), `card_shadow` (preset enum `none | subtle | medium`).
+  - `border_radius_px` stays on `widget_config` as its own column (existing) rather than migrating into `theme_tokens`. `brand_accent_color` (existing column) is superseded by `theme_tokens.accent_color` but kept for backward-shape reasons; consolidation deferred to the tenant-module PR.
+  - Precedence at widget runtime: inline `--wg-*` from admin overrides → Shopify theme variable → WiseGift default. All expressed inside a single `var()` chain per property, so the browser resolves the cascade natively — no widget code branches on tenant type.
+- Rejected alternatives:
+  - **Full Shadow DOM isolation only (status quo).** Safest, but widget looks foreign to the merchant's storefront. Rejected — the trust cost outweighs the safety win now that we've designed a mechanism that keeps isolation intact.
+  - **`::part` slots for merchant-CSS overrides.** Powerful (merchant can style any widget internal), but requires the merchant to write CSS. Not viable for "install and forget" merchants. Deferred to v2 if power users ask.
+  - **Custom CSS injection by the merchant (raw stylesheet).** Same problem as `::part` plus a real risk of merchants sending broken CSS that we can't validate. Rejected.
+  - **Larger token set (typography scale, colour palette per state, focus ring, etc.).** Cost is admin-UX complexity and merchant decision fatigue. Eight tokens covers 90 % of visual coherence; expand later based on pilot feedback.
+- Consequences:
+  - `docs/product/spec.md` — new feature block `Merchant admin — Widget theming` added between `Widget configuration` and `Placements`; cross-reference added to `Widget configuration` to avoid overlap. 13 acceptance criteria including live preview, per-token reset, auto-inherit indicator (Shopify only), WCAG AA contrast warning, font-loaded-on-storefront warning.
+  - `docs/engineering/architecture.md` §8 — `widget_config.theme_tokens JSONB` column added; `brand_accent_color` and `border_radius_px` column notes updated to describe their new roles in the fallback chain.
+  - `docs/engineering/architecture.md` §10.5 — new subsection "Theming and CSS variable inheritance" covers the two-layer model, the `var()` fallback chain with code example, bootstrap wiring (non-null tokens applied inline on host element), `SPACING_SCALES` and `CARD_SHADOWS` preset tables. Bundle-size sub-budget: theming logic must add < 1 KB gzipped to `widget.js`; frontend-engineer's initial estimate is 400–600 bytes.
+- Open questions surfaced by the drafts (not blocking commit; PO to resolve at implementation time):
+  - **Auto-inherit banner wording** — the "N of 8 style values inherited from your theme" indicator requires probing which Shopify CSS variables the theme actually exposes. Detection mechanism (static list vs live probe of the merchant's storefront from the admin) TBD at first widget PR.
+  - **Reset semantics** — split "Reset to auto-inherit" (Shopify) vs "Reset to WiseGift defaults" (non-Shopify, plus escape hatch) rather than one unified "Reset" that changes meaning by tenant type. Confirm the two-mode framing.
+  - **Config delivery shape** — ship `theme_tokens` in the `POST /widget/v1/session` bootstrap response (one fewer round-trip, helps 100 ms TTI budget) or as a separate CDN-cached `GET /widget/v1/config` (edge-cacheable across sessions). Frontend-engineer leans bootstrap; not decided.
+  - **`border_radius_px` shape asymmetry** — kept as its own column vs migrated into `theme_tokens`. Migration is one small data move at tenant-module PR time; asymmetry is one exception in the widget bootstrap. TBD at tenant-module PR.
+- Made by: Product Owner (advised by product-analyst, frontend-engineer, claude)
+
 ## 2026-09-29 — Full platform-agnostic column sweep across the schema
 - Context: The `tenants ↔ platform_credentials` split entry above removed Shopify-specific columns from `tenants` but left the same leak pattern intact everywhere else — `shopify_product_id` on `tenant_products`, `shopify_variant_id` on `tenant_product_variants`, `source_shopify_product_id` / `recommended_shopify_product_id` on `precomputed_recs`, `shopify_product_id` on `events`, `shopify_order_id` on `orders_attributed`, plus `handle` (a Shopify vocabulary noun) on `tenant_products`. PO surfaced the inconsistency: "all the columns of the tables can't have platform-specific columns." The prior sweep was scope-limited; this one completes it.
 - Decision:

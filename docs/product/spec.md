@@ -195,6 +195,29 @@ As a merchant admin, I want to control what the widget says and where it appears
 - [ ] The merchant can pick brand accent colour and border radius; other styling matches the storefront theme via inherited CSS variables.
 - [ ] Save persists to the tenant's widget config; changes propagate to live widgets within 5 minutes (config is fetched with the widget bundle and cached).
 - [ ] All fields are inline-validated.
+- [ ] Deep visual look-and-feel (colours, fonts, spacing, shadow) is handled in the **Merchant admin — Widget theming** feature; this screen links out to Theming rather than duplicating those controls.
+
+---
+
+## Feature: Merchant admin — Widget theming
+
+### User Story
+As a merchant admin, I want the widget to look like it belongs on my storefront without me writing CSS so that shoppers see a native experience and I can override specific tokens when the auto-inheritance is not enough.
+
+### Acceptance Criteria
+- [ ] A **Theming** screen lives in the admin dashboard under Widget → Theming, distinct from Widget → Configuration (copy / placements / rec count).
+- [ ] On Shopify tenants, an **auto-inherit status banner** at the top reads "Your Shopify theme is providing N of 8 style values automatically" and lists which tokens are inherited (accent colour, text colour, background colour, body font, heading font) vs. which fell back to WiseGift defaults; the banner is hidden entirely for non-Shopify tenants (VTEX / SFCC post-MVP) where auto-inheritance does not apply.
+- [ ] Each of the 8 design tokens (`accent_color`, `text_color`, `background_color`, `font_family`, `heading_font_family`, `border_radius_px`, `spacing_scale`, `card_shadow`) is exposed as an individually editable control on the Theming screen, with the control matched to the token type: colour picker with hex input for the three colour tokens, free-text input for the two font-family tokens, numeric stepper (0–24) for `border_radius_px`, preset dropdown (`compact` / `cozy` / `roomy`) for `spacing_scale`, preset dropdown (`none` / `subtle` / `medium`) for `card_shadow`.
+- [ ] Every token control shows its current effective value and its source next to the control: `Inherited from your theme` (Shopify only), `Custom override`, or `WiseGift default`.
+- [ ] A **live preview panel** renders the widget with the current settings applied and updates within 500 ms of any control change, without requiring a save; the preview mirrors the widget's real Shadow DOM isolation so what the merchant sees is what shoppers will see.
+- [ ] Each token has a **Reset to auto-inherit** control (Shopify tenants) or **Reset to WiseGift default** control (non-Shopify tenants) that clears the override for that single token; the live preview updates immediately.
+- [ ] A global **Reset all overrides** action clears every token override in one click, with an inline confirmation ("This will remove all 8 overrides and fall back to your Shopify theme where available"); no destructive dialog, undo is available until the merchant navigates away.
+- [ ] A **Reset to WiseGift defaults** escape hatch is available separately from auto-inherit reset — it explicitly opts out of theme inheritance and pins the widget to WiseGift's neutral defaults, for merchants whose theme variables produce a poor result.
+- [ ] If `text_color` on `background_color` fails WCAG AA contrast (< 4.5:1 for body text), a non-blocking warning appears next to those controls ("Contrast ratio 3.2:1 — shoppers with low vision may struggle to read recommendations") with a "Suggest a compliant colour" affordance; the merchant can still save.
+- [ ] If a merchant enters a `font_family` value that is not one of a known-safe list of system fonts (system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif, serif, Georgia, Times New Roman, monospace), a non-blocking warning reads "We cannot verify this font is loaded on your storefront — if it is not, shoppers will see a fallback font"; the merchant can still save.
+- [ ] `heading_font_family` left blank falls back to `font_family` at render time; the control shows placeholder text "Uses body font" to make the fallback visible.
+- [ ] Save persists all token overrides to the tenant's widget config; changes propagate to live widgets within 5 minutes (same cache behaviour as Widget → Configuration).
+- [ ] The Theming screen is keyboard-navigable end-to-end (tab order, focus rings inside the live preview, colour picker reachable without a mouse) and screen-reader-labels every control including the auto-inherit source indicators.
 
 ---
 
@@ -388,14 +411,16 @@ WiseGift is a **data processor** for the merchant's shopper data (anonymous sess
 
 ## Open questions
 
-- **Language coverage** — MVP ships widget copy in EN, ES, PT. Do we also need DE / FR / IT before the first pilot with a non-Iberian merchant? Route: `functional-analyst` + `marketing-manager`.
-- **Widget consent for EU** — some legal regimes require explicit consent for setting a first-party session identifier even without cross-site tracking. Do we need a consent-mode integration with the merchant's cookie banner from day one? Route: `privacy-legal-advisor`.
-- **App Store category** — do we list under Marketing → Upselling & Cross-selling, or Store Design → Product Discovery? Positioning matters for organic discovery. Route: `marketing-manager` + `platform-integrations-expert` (proposed agent).
-- **Custom-app pilot billing** — during the pilot, merchants install as custom apps (bypassing App Store review). Shopify's App Store billing is not available to custom apps. Do we bill pilot-converted merchants through Stripe until they migrate to the App Store version, or migrate them to the public app at conversion? Route: `devops-expert` + `platform-integrations-expert`.
-- **Merchant-side data-clean-room requests** — if a merchant asks for their tenant's raw event data as an export, what SLA and format? Route: `functional-analyst`.
+*(No MVP-scope questions currently open. New items land here; resolved items move to the section below.)*
 
 ---
 
 ## Resolved questions
 
-*(To be populated as MVP scope questions are closed. The seven pivot-era scope decisions are captured in `docs/decisions.md` entry dated 2026-09-29 "Frozen MVP scope".)*
+- **Language coverage** (2026-09-29): MVP ships widget copy in EN, ES, PT. No DE / FR / IT preemptively. Rationale: pilot pool is EU merchants (ES/PT initially, UK/DE eventually); EN covers the UK case; DE / FR / IT translations are cheap to add per-pilot on demand (one signed merchant = one translation pass), not preemptively. See `docs/decisions.md` 2026-09-29 "Language coverage".
+- **Custom-app pilot billing** (2026-09-29): Public App Store billing throughout, with a Stripe safety net if App Store review is not approved by the first pilot's day-90 conversion. Rationale: single billing system through the lifecycle is cleaner than dual-track; Stripe engineering is deferred until we actually need it (i.e. review runs long OR a specific pilot converts before public app is live). Submission to App Store review is planned for day 60 of the first pilot so approval lands before day 90. See `docs/decisions.md` 2026-09-29 "Custom-app pilot billing".
+- **Merchant data export SLA** (2026-09-29): Support-only export at MVP — merchant emails support, we run a manual query and hand back a signed URL to a JSONL file within 5 business days. Self-serve export becomes an Enterprise-tier feature post-MVP once a real merchant asks. Rationale: mid-market pilots don't demand this; Enterprise negotiates it in the contract; premature to build self-serve before any demand signal. See `docs/decisions.md` 2026-09-29 "Merchant data export SLA".
+- **Widget consent for EU** (2026-09-29): No Consent Mode integration at MVP launch; ship the escape-hatch code path from day one so a stricter pilot can be flipped into consent-gated mode without a code change. Rationale: our session-ID data flow (first-party UUID, no PII, no cross-site tracking, 30-day TTL, EU-only) sits inside the CNIL-line "strictly-necessary measurement" reading of ePrivacy Art. 5(3), with GDPR Art. 6(1)(f) legitimate interests as belt-and-braces. Residual risk (Germany's DSK / Italy's Garante may read stricter) is mitigated by the shipped escape hatch. Position paper at `docs/legal/consent-position.md`. See `docs/decisions.md` 2026-09-29 "Widget consent for EU".
+- **App Store category** (2026-09-29): Primary category **Marketing → Upselling & Cross-selling**; secondary (if App Store rules permit) **Store Design → Product Discovery**. Rationale: mid-market ICP searches Marketing → Upselling for revenue-per-session lift; Product Discovery is the second organic entry for the "gift finder" mental model. Positioning inside the listing leads with "AI recommendations that also do gifts" so we don't cap addressable use to gifting seasons. Listing artefacts at `docs/growth/app-store-listing.md`. See `docs/decisions.md` 2026-09-29 "App Store category".
+
+*The seven pivot-era scope decisions are captured in `docs/decisions.md` entry dated 2026-09-29 "Frozen MVP scope".*

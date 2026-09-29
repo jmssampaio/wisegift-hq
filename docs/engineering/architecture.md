@@ -362,11 +362,26 @@ Composite PK `(tenant_id, version)`.
 |---|---|---|
 | tenant_id | UUID | PK |
 | hook_copy | TEXT | Localised strings by lang |
-| brand_accent_color | VARCHAR(7) | Hex |
-| border_radius_px | INTEGER | |
+| brand_accent_color | VARCHAR(7) | Hex. Superseded by `theme_tokens.accent_color`; kept for backward-shape reasons and read as a second-level fallback. Consolidation TBD at the tenant-module PR |
+| border_radius_px | INTEGER | Reused by the theming pathway as the source of `--wg-border-radius`; not duplicated inside `theme_tokens` |
 | recs_per_widget | INTEGER | 3–10 |
 | placements_enabled | TEXT[] | e.g. `["home_hero", "pdp_slot", "gift_finder"]` |
+| theme_tokens | JSONB | Merchant-set design-token overrides. Nullable, defaults `{}`; only explicitly-set overrides live here (unset tokens fall through to the Shopify theme variable, then the WiseGift default — see §10.5). Shape below |
 | updated_at | TIMESTAMPTZ | |
+
+`theme_tokens` JSONB shape (every key nullable / omissible; unknown keys rejected at the admin API boundary):
+
+| Key | Type | Notes |
+|---|---|---|
+| accent_color | VARCHAR(7) | Hex. Emitted as `--wg-accent-color`. Falls back to `var(--color-accent)` then WiseGift default |
+| text_color | VARCHAR(7) | Hex. Emitted as `--wg-text-color`. Falls back to `var(--color-foreground)` then default |
+| background_color | VARCHAR(7) | Hex. Emitted as `--wg-background-color`. Falls back to `var(--color-background)` then default |
+| font_family | TEXT | CSS font-family value. Emitted as `--wg-font-family`. Falls back to `var(--font-body-family)` then system stack |
+| heading_font_family | TEXT | CSS font-family value. Emitted as `--wg-heading-font-family`. Falls back to `var(--font-heading-family)` then to `--wg-font-family` |
+| spacing_scale | VARCHAR(8) | Enum: `compact` \| `cozy` \| `roomy`. Resolved to a preset scale inline by the widget (see §10.5). No Shopify equivalent |
+| card_shadow | VARCHAR(8) | Enum: `none` \| `subtle` \| `medium`. Resolved to a preset shadow definition inline by the widget (see §10.5). No Shopify equivalent |
+
+Note: `border_radius_px` lives on the `widget_config` row itself (existing column), not inside `theme_tokens`. The widget resolves it to `--wg-border-radius` at mount alongside the JSONB overrides.
 
 ### `precomputed_recs`
 
@@ -578,6 +593,76 @@ Bundle-size assertion in CI: `widget.js` gzipped ≤ 50 KB. Fail the build on br
 - Preact only. No React.
 - CSS entirely inside Shadow DOM.
 - No third-party trackers.
+
+### 10.5 Theming and CSS variable inheritance
+
+See `decisions.md` 2026-09-29 "Widget theming" for the source of the design direction.
+
+Two-layer model. The widget always renders inside Shadow DOM; CSS custom properties pierce the shadow boundary by design, so the widget can consume variables defined on the merchant's `<html>` / theme container. **Layer 1** is Shopify auto-inheritance — the merchant's theme exposes standard variables (`--color-accent`, `--color-foreground`, `--color-background`, `--font-body-family`, `--font-heading-family`) and the widget's internal CSS references them via `var()` with WiseGift defaults. **Layer 2** is merchant-set overrides — `widget_config.theme_tokens` values are applied at mount as `--wg-*` inline styles on the widget host element, taking precedence in the `var()` fallback chain.
+
+Fallback chain for every themable property:
+
+```css
+/* inside widget Shadow DOM */
+.wg-cta {
+  color: var(--wg-accent-color, var(--color-accent, #6c47ff));
+  font-family: var(--wg-font-family, var(--font-body-family, system-ui, -apple-system, "Segoe UI", sans-serif));
+  border-radius: var(--wg-border-radius, 8px);
+}
+```
+
+Order of precedence, highest wins:
+1. `--wg-*` set inline on the widget host (from `theme_tokens` and other explicit widget_config columns).
+2. Standard Shopify theme variable (present when the widget is embedded via the Theme App Extension inside a Dawn-style theme).
+3. WiseGift default baked into the `var()` call.
+
+Bootstrap wiring at widget mount:
+
+```ts
+// only merchant-explicitly-set tokens get emitted; unset keys stay in the fallback chain
+const inlineVars: Record<string, string> = {};
+if (config.theme_tokens?.accent_color)       inlineVars["--wg-accent-color"]       = config.theme_tokens.accent_color;
+if (config.theme_tokens?.text_color)         inlineVars["--wg-text-color"]         = config.theme_tokens.text_color;
+if (config.theme_tokens?.background_color)   inlineVars["--wg-background-color"]   = config.theme_tokens.background_color;
+if (config.theme_tokens?.font_family)        inlineVars["--wg-font-family"]        = config.theme_tokens.font_family;
+if (config.theme_tokens?.heading_font_family) inlineVars["--wg-heading-font-family"] = config.theme_tokens.heading_font_family;
+if (config.border_radius_px != null)         inlineVars["--wg-border-radius"]      = `${config.border_radius_px}px`;
+
+const spacing = SPACING_SCALES[config.theme_tokens?.spacing_scale ?? "cozy"];
+inlineVars["--wg-space-sm"] = spacing.sm;
+inlineVars["--wg-space-md"] = spacing.md;
+inlineVars["--wg-space-lg"] = spacing.lg;
+
+inlineVars["--wg-card-shadow"] = CARD_SHADOWS[config.theme_tokens?.card_shadow ?? "subtle"];
+
+// applied to the widget host element, not to :host inside the Shadow DOM,
+// so the values are inheritable across every internal stylesheet.
+Object.entries(inlineVars).forEach(([k, v]) => hostElement.style.setProperty(k, v));
+```
+
+Preset resolution (widget carries these inline; no config lookup, no server round-trip):
+
+```ts
+const SPACING_SCALES = {
+  compact: { sm: "6px",  md: "10px", lg: "16px" },
+  cozy:    { sm: "8px",  md: "12px", lg: "24px" },
+  roomy:   { sm: "12px", md: "20px", lg: "32px" },
+} as const;
+
+const CARD_SHADOWS = {
+  none:   "none",
+  subtle: "0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.10)",
+  medium: "0 4px 6px rgba(0, 0, 0, 0.07), 0 10px 15px rgba(0, 0, 0, 0.10)",
+} as const;
+```
+
+Shopify auto-inheritance requires no special widget code. The Theme App Extension places `<wisegift-widget>` inside a block container that already sits inside the theme's variable-defining ancestor (`<html>` or the theme's section wrapper on Dawn / Debut / Turbo). Custom properties cascade through the shadow boundary. If a merchant's theme does not expose the standard variables, the widget silently falls through to the WiseGift defaults; no error state, no measurement wrinkle.
+
+Bundle-budget implication: all theming logic (token application + preset tables + host-style write) must fit within **< 1 KB gzipped**. This is a hard sub-budget against the overall 50 KB widget budget. Enforced by inspecting the theming module's minified size in CI when the widget-bundle assertion runs.
+
+Open items ("TBD at first widget PR"):
+- Whether `theme_tokens` is served with the widget bootstrap payload from `POST /widget/v1/session` or as a separate `GET /widget/v1/config` call cached at CDN edge.
+- Whether preset tables live in the core widget bundle or a lazily-fetched theme chunk (only justified if the < 1 KB budget is breached).
 
 ---
 
