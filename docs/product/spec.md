@@ -88,6 +88,7 @@ As a merchant admin, I want my product catalog to stay in sync with WiseGift aut
 - [ ] Unavailable products (all variants out of stock or archived) are excluded from recommendation candidates but retained in the DB.
 - [ ] Nightly reconciliation job re-fetches the catalog and diffs against the DB to catch any webhook that was missed.
 - [ ] Catalog size at any time is visible to the merchant on the admin dashboard.
+- [ ] Merchant-facing sync controls and visibility (manual resync triggers, sync-status panel, webhook health) live in the **Merchant admin — Catalog sync controls** feature.
 
 ---
 
@@ -207,6 +208,22 @@ As a merchant admin, I want to see which placements are live and manage them so 
 - [ ] The merchant can enable or disable a placement; disabled placements do not render the widget on the storefront.
 - [ ] Each placement carries an independent set of KPIs on the analytics dashboard.
 - [ ] Adding a new placement follows the same "Configure in Shopify" deep-link flow used in onboarding.
+
+---
+
+## Feature: Merchant admin — Catalog sync controls
+
+### User Story
+As a merchant admin, I want visibility into how my catalog is syncing and the ability to trigger a resync when I need one so that I trust the widget is recommending what is actually in my store.
+
+### Acceptance Criteria
+- [ ] A **Catalog sync** panel in the admin dashboard shows: total product count in WiseGift, timestamp of last full sync, timestamp of last webhook received per topic (`products/update`, `inventory_levels/update`, etc.), and a webhook-health indicator (OK / degraded / not receiving) derived from time-since-last-webhook thresholds.
+- [ ] A **Refresh prices & stock** button re-pulls variant price and availability from Shopify Admin API without recomputing embeddings. Runs asynchronously with a progress indicator. Rate-limited to one run per tenant per hour.
+- [ ] A **Full resync** button re-fetches the full catalog and re-embeds only products whose `content_hash` changed (title / description / tags). Runs asynchronously with a progress indicator. Rate-limited to one run per tenant per 24 hours, with a "Contact support to run more often" affordance.
+- [ ] Both buttons disable while a sync is in progress and re-enable on completion; failures show a short error and a "Retry" affordance.
+- [ ] Manual syncs are counted against the same Shopify per-app rate-limit budget as automatic syncs — a large-catalog manual run cannot starve other tenants (per `data.md` §3 rate-limit posture).
+- [ ] Per-tenant sync cadence (nightly reconciliation frequency) is NOT configurable at MVP; it is fixed for all tenants. Configurable cadence is post-MVP.
+- [ ] Per-product force-refresh is NOT exposed in the merchant UI at MVP; it is available support-only via a backend admin path.
 
 ---
 
