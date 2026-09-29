@@ -327,6 +327,23 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-29 — Widget theming UX questions closed (2 items)
+- Context: The Widget theming decision entry (2026-09-29 "two-layer model") flagged two UX questions from the product-analyst draft: (1) how the "auto-inherit banner" detects which Shopify CSS variables the theme actually exposes; (2) reset semantics — tenant-type-specific labels ("Reset to auto-inherit" vs "Reset to WiseGift default") or unified.
+- Decisions:
+  1. **Auto-inherit banner: no detection, no "N of 8" claim, live preview is the signal.** The banner becomes a lightweight info line ("Colours and fonts inherit from your Shopify theme when your theme provides them. The live preview below shows the actual result."). The preview is the authoritative source of truth on what the widget actually looks like — a probe or a claimed N would either be misleading (static list assuming Dawn-like variables the merchant's theme might not expose) or add real complexity (live probe of the merchant's storefront from the admin dashboard, cross-origin considerations, latency). Simpler is honest.
+  2. **Reset semantics: unified per-token Reset + two top-level presets.** Every token has one Reset control regardless of tenant type — the widget's `var()` fallback chain does the tenant-specific work (Shopify: fall back to theme variable if present, else default; non-Shopify: fall back to default). Copy stays uniform; a hover tooltip explains the fallback. Two top-level presets replace the previous "Reset all overrides" + "Reset to WiseGift defaults escape hatch": **Auto-inherit from theme** (clears every override) and **WiseGift neutrals** (fills all 8 tokens with WiseGift's defaults, pinning the widget to a WiseGift look regardless of theme — this is the escape-hatch case merchants with ugly themes actually need). The escape hatch is now a preset, not a separate button; no new schema column needed.
+- Rejected alternatives:
+  - Live storefront probe from the admin dashboard for the banner — adds cross-origin fetch permissions, latency, and complexity for a claim that a preview already answers.
+  - Static "your theme should provide N" claim — misleading if the merchant's theme doesn't expose the assumed variables.
+  - Tenant-type-specific Reset labels — merchant confusion for zero benefit; the fallback chain in the widget code already handles the divergence invisibly.
+  - Separate "Reset to WiseGift defaults" escape-hatch button — adds a button whose meaning ("opt out of theme inheritance") is not obvious. Folding it into a preset labelled "WiseGift neutrals" makes the intent explicit.
+  - New `widget_config.ignore_theme_inheritance BOOLEAN` column — considered as an alternate escape-hatch mechanism. Rejected because the preset approach avoids the schema addition and gives the merchant the same result via explicit token values (which they can then tweak from).
+- Consequences:
+  - `spec.md` "Merchant admin — Widget theming" feature: three ACs updated (banner text, unified Reset, presets), one AC tightened (accessibility screen-reader coverage), no ACs added or removed net.
+  - No schema change — the presets are UI-side operations on the existing `widget_config.theme_tokens` JSONB.
+  - **Frontend-engineer follow-up**: the "WiseGift neutrals" preset needs a canonical values file (`ACCENT_DEFAULT`, `TEXT_DEFAULT`, `BACKGROUND_DEFAULT`, etc.) that the admin preset button reads AND the widget bundle also carries as its default fallback values. Single source of truth; deviation between the two would produce confusing behaviour ("I clicked WiseGift neutrals but the widget looks different from the WiseGift default"). Define in the first widget PR.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-09-29 — Architecture open questions closed (8 items)
 - Context: `architecture.md` §14 carried 8 MVP-scope open questions plus scattered inline TBDs referencing them (embedding provider, admin auth library, admin frontend framework, cost telemetry destination, widget→API tokens, order-session correlation, EU consent posture, merchant domain allowlist source). PO closed them in one batch.
 - Decisions:
