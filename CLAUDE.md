@@ -22,13 +22,14 @@ deleted (potential future B2C storefront over participating merchants).
 
 ## Repositories
 - `~/Workspace/wisegift/wisegift-backend` — backend (APIs, per-tenant data, order webhook receiver)
+- `~/Workspace/wisegift/wisegift-widget` — embeddable widget (Preact + Web Components, Shadow DOM, ≤ 50 KB gzipped; served via Shopify Theme App Extension). Scaffolded 2026-09-29.
 - `~/Workspace/wisegift/wisegift-flutter` — Flutter B2C client, **parked** as of 2026-09-29
-- widget + merchant admin frontend repos — not yet created; scope defined in `docs/product/spec.md`
+- merchant admin frontend repo — not yet created; Next.js (App Router) per architecture.md; scope in `docs/product/spec.md`
 - this repo (`wisegift-hq`) — specs, decisions, the agent team, shared docs
 
 > Launch Claude Code from this repo to get the full team, then grant access to
 > the code repos as needed, e.g.:
-> `claude --add-dir ../wisegift-backend`
+> `claude --add-dir ../wisegift-backend --add-dir ../wisegift-widget`
 
 ## The team (subagents) — 7 active + 1 parked
 
