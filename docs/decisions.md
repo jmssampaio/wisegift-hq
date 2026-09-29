@@ -274,4 +274,26 @@
   - Offline eval regression margin (propose: calibrate against first fixture run, then set from observed variance).
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-29 — architecture.md §8 schema pass: four additions + tenants ↔ platform_credentials split
+- Context: The "Resolved 6 open questions" entry above flagged four downstream schema changes needed in `architecture.md` §8 (catalog_sync_runs table + three columns). While reviewing that pass, PO surfaced a design smell: `shop_domain` and `shopify_shop_id` were sitting on the `tenants` table, which is meant to hold WiseGift-internal identity only. Post-MVP integrations (VTEX, SFCC) are already reflected in `platform_credentials.platform`, but the platform-side identifiers were bleeding into `tenants`. Both changes were bundled into one architecture.md edit since they touch adjacent tables.
+- Decision:
+  1. **Four schema additions** applied per the earlier decision entry:
+     - `catalog_sync_runs` new table (`id`, `tenant_id`, `started_at`, `finished_at`, `status`, `products_seen_count`, `pages_fetched`, `trigger`); the "successful run = ok + count within ±10 %" rule is documented inline on the table.
+     - `events.intent_form_schema_version INTEGER` — nullable at column level (since the events table is shared across event types); set only when `event_type='intent_submitted'`, enforced at app level.
+     - `tenants.daily_spend_cap NUMERIC(10,2)` — nullable, NULL falls through to per-plan constant.
+     - `tenants.feature_flags JSONB` — defaults `{}`; Sonnet escalation is the first flag.
+  2. **tenants ↔ platform_credentials split.** `tenants` now holds WiseGift-internal identity only. Removed `shop_domain` and `shopify_shop_id`; added to `platform_credentials`:
+     - `platform_shop_domain VARCHAR(255)` — merchant's identifier on the source platform (Shopify domain, VTEX account name, SFCC realm host). `UNIQUE (platform, platform_shop_domain)`.
+     - `platform_shop_id VARCHAR(64)` — stringly typed so post-MVP platforms with non-numeric IDs land cleanly. Shopify's numeric shop_id stringifies without loss.
+     - PK on `platform_credentials` stays `tenant_id UUID` at MVP (single platform per tenant). Migration to `(tenant_id, platform)` composite PK is called out inline on the table for the day a tenant ever runs multi-platform. Not built now.
+- Rejected alternatives:
+  - Keep Shopify-specific columns on `tenants` and generalise "later, when VTEX is in scope." Cost now is trivial (no live tenant data); cost at VTEX-time is a live migration on real tenants.
+  - Add both old and new columns for "compat." No live tenants exist — no compatibility to preserve.
+  - Generalise further with a `platform_metadata JSONB` blob on `platform_credentials`. Premature; two typed columns cover the identity-lookup need and are easier to index.
+- Consequences:
+  - Two `data.md` references to "shop_domain" (webhook dedup fallback tuple in §3, tenant_id resolution in §4) were reviewed and **kept** — they refer to the Shopify webhook payload's `shop_domain` field (an inherently Shopify concept), not the removed column.
+  - No backend code exists yet, so this is purely a docs change. The first backend PR reading tenant identity will pick up the new shape from `architecture.md` directly.
+- Made by: Product Owner (advised by claude)
+
+
 

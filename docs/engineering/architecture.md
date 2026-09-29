@@ -245,15 +245,17 @@ Every table below has `tenant_id UUID NOT NULL` except `tenants` itself and the 
 
 ### `tenants`
 
+Platform-agnostic. The identifiers a merchant carries on their source platform (Shopify shop domain + shop ID, VTEX account, SFCC realm) live on `platform_credentials`, not here. See `decisions.md` 2026-09-29 "tenants ↔ platform_credentials split".
+
 | Column | Type | Notes |
 |---|---|---|
 | tenant_id | UUID | PK |
-| shop_domain | VARCHAR(255) | Shopify shop domain (e.g. `merchant.myshopify.com`), unique |
-| shopify_shop_id | BIGINT | Shopify's numeric shop ID |
 | region | VARCHAR(2) | ISO region (`EU`); reserved for future US expansion |
 | vertical | VARCHAR(32) | e.g. `fashion`, `beauty`, `home`, `tech`, `books`, `food`, `kids`, `jewelry`, `other` |
 | plan | VARCHAR(32) | `pilot`, `starter`, `growth`, `scale`, `enterprise` |
 | monthly_usage_cap | INTEGER | Live-LLM recommendation calls / month; default 50000 |
+| daily_spend_cap | NUMERIC(10,2) | Nullable. NULL = fall through to per-plan constant. Set explicitly only for pilots with custom headroom or outlier tenants. See `decisions.md` 2026-09-29 "Resolved 6 open questions" |
+| feature_flags | JSONB | Per-tenant boolean flags (e.g. `{"sonnet_escalation": true}`). Starts as `{}`. See `decisions.md` 2026-09-29 |
 | active | BOOLEAN | `false` until onboarding wizard completes |
 | soft_deleted_at | TIMESTAMPTZ | Nullable |
 | created_at | TIMESTAMPTZ | |
@@ -261,10 +263,14 @@ Every table below has `tenant_id UUID NOT NULL` except `tenants` itself and the 
 
 ### `platform_credentials`
 
+Holds both the OAuth material and the platform-side identity of the merchant. One row per tenant at MVP (single platform per tenant); PK becomes `(tenant_id, platform)` if a tenant ever runs on multiple platforms.
+
 | Column | Type | Notes |
 |---|---|---|
 | tenant_id | UUID | PK + FK to `tenants` |
 | platform | VARCHAR(16) | `shopify` (MVP), later `vtex`, `sfcc` |
+| platform_shop_domain | VARCHAR(255) | Merchant's identifier on the source platform. Shopify: `merchant.myshopify.com`. VTEX: account name. SFCC: realm host. Unique per `(platform, platform_shop_domain)` |
+| platform_shop_id | VARCHAR(64) | Platform-native numeric or opaque ID as string (Shopify shop_id, VTEX account_id, SFCC organization_id). Stringly-typed so post-MVP platforms with non-numeric IDs land cleanly |
 | oauth_access_token_encrypted | TEXT | Encrypted at rest; decrypted only in memory for the outbound call |
 | scopes | TEXT[] | Granted OAuth scopes |
 | installed_at | TIMESTAMPTZ | |
@@ -318,6 +324,23 @@ Per-tenant catalog snapshot. One row per Shopify product per tenant.
 | shopify_variant_id | BIGINT | |
 | price | DECIMAL(12,2) | |
 | available | BOOLEAN | |
+
+### `catalog_sync_runs`
+
+One row per reconciliation run. Drives the deactivation-on-successful-miss policy (`data.md` §3) and the webhook-health indicator in the admin sync-status panel (`spec.md` → Merchant admin → Catalog sync controls). See `decisions.md` 2026-09-29.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | BIGINT | PK, auto-increment |
+| tenant_id | UUID | Indexed with `(tenant_id, started_at DESC)` for last-run lookup |
+| started_at | TIMESTAMPTZ | |
+| finished_at | TIMESTAMPTZ | Nullable while the run is in flight |
+| status | VARCHAR(16) | `ok`, `failed`, `partial` |
+| products_seen_count | INTEGER | Nullable if the run failed before counting completed |
+| pages_fetched | INTEGER | Shopify pagination pages consumed |
+| trigger | VARCHAR(16) | `nightly`, `manual_full`, `manual_prices` — matches the three ingestion entry points in `data.md` §3 |
+
+A run counts as "successful" for deactivation-counter purposes only if `status='ok'` AND `products_seen_count` is within ±10% of the last successful run's count.
 
 ### `intent_form_schemas`
 
@@ -381,6 +404,7 @@ Widget event stream (append-only).
 | shopify_product_id | BIGINT | Nullable |
 | rank_score | DECIMAL(6,4) | Nullable |
 | served_from | VARCHAR(16) | Nullable |
+| intent_form_schema_version | INTEGER | Nullable. Set only when `event_type='intent_submitted'`; identifies which `intent_form_schemas.version` the payload conforms to, so the v2 learning loop can read historical events across schema upgrades without a backfill. See `decisions.md` 2026-09-29 |
 | occurred_at | TIMESTAMPTZ | |
 
 ### `orders_attributed`
