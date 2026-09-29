@@ -137,8 +137,8 @@ smear load) produces:
 - Heuristics at MVP: price-band adjacency (same order-of-magnitude to the
   source SKU), category diversity (don't return 5 near-duplicates), and
   in-stock filter. No LLM calls.
-- Stored in `precomputed_recs (tenant_id, source_shopify_product_id, rank,
-  recommended_shopify_product_id, computed_at)`.
+- Stored in `precomputed_recs (tenant_id, source_platform_product_id, rank,
+  recommended_platform_product_id, computed_at)`.
 - Re-run on-demand when catalog change exceeds a per-tenant threshold (e.g.
   >5% of SKUs updated in a day). **Threshold TBD at first pilot** — start
   conservative, tune from observed rebuild latency.
@@ -234,7 +234,7 @@ The `intent_signature` is a SHA-256 of a **canonical** intent payload:
 The `context_signature` is a SHA-256 of:
 
 - `placement` (`home_hero` | `pdp_slot` | `gift_finder`)
-- `shopify_product_id` if PDP, otherwise null
+- `platform_product_id` if PDP, otherwise null
 
 Pattern mirrors `RecipientProfileHasher` from the pre-pivot codebase — same
 discipline: canonicalise inputs before hashing so trivially-different requests

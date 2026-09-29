@@ -70,7 +70,7 @@ behind the same `PlatformCatalogSource` port; the DB shape does not change.
 
 ### What we store per product
 
-The set from `architecture.md` §8: identity (`shopify_product_id`, `handle`),
+The set from `architecture.md` §8: identity (`platform_product_id`, `slug`),
 merchandising text (`title`, `description`, `product_type`, `tags`), price
 range across variants (`price_min`, `price_max`, `currency`), media
 (`image_url`), availability rollup (`available` — true if any variant in
@@ -123,7 +123,7 @@ Manual runs share the same per-tenant token bucket and fleet-wide 429
 guard as automatic syncs (see **Rate limit posture** below), so a
 large-catalog manual resync cannot starve other tenants.
 
-Idempotency comes from `(tenant_id, shopify_product_id)` unique and from
+Idempotency comes from `(tenant_id, platform_product_id)` unique and from
 `content_hash`. A rerun with unchanged content produces the same DB state
 and skips the embed call. `last_seen_at` is bumped on every touch; the
 nightly reconciliation job re-fetches the catalog and diffs, catching any
@@ -178,7 +178,7 @@ We accept `orders/create` from Shopify and immediately drop everything we
 do not need. The set we keep is exactly:
 
 - `order_id` (the Shopify order ID, primary key)
-- `line_items[]` — only `{shopify_product_id, quantity, price}` per line
+- `line_items[]` — only `{platform_product_id, quantity, price}` per line
 - `total_price`, `currency`
 - `received_at` (server-side timestamp, not the shopper's clock)
 - `tenant_id` (derived from `shop_domain`)
@@ -220,7 +220,7 @@ Four event types emitted from day one:
   upgrades without a backfill. Payload shape described by the tenant's
   active `intent_form_schema` — see §8.
 - `product_clicked` — a recommendation card was clicked; carries the
-  clicked `shopify_product_id`, its `rank_score`, and the `served_from`
+  clicked `platform_product_id`, its `rank_score`, and the `served_from`
   echoed from the rec response.
 
 Every event carries `tenant_id`, `session_id`, `placement`, `intent_mode`,
@@ -496,7 +496,7 @@ Called out so no one carries a pre-pivot habit forward:
 - **Affiliate provenance columns (`provider_id`,
   `provider_product_id`, `provider_categories`).** Gone. Products come
   from one place per tenant (their platform), identified by
-  `shopify_product_id`.
+  `platform_product_id`.
 - **A canonical WiseGift category taxonomy (Technology / Home & Living
   / Beauty & Wellness etc.).** Not applied. Ranking uses the merchant's
   own `product_type` and `tags`; verticalised intent packs (post-MVP)

@@ -295,5 +295,33 @@
   - No backend code exists yet, so this is purely a docs change. The first backend PR reading tenant identity will pick up the new shape from `architecture.md` directly.
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-29 — Full platform-agnostic column sweep across the schema
+- Context: The `tenants ↔ platform_credentials` split entry above removed Shopify-specific columns from `tenants` but left the same leak pattern intact everywhere else — `shopify_product_id` on `tenant_products`, `shopify_variant_id` on `tenant_product_variants`, `source_shopify_product_id` / `recommended_shopify_product_id` on `precomputed_recs`, `shopify_product_id` on `events`, `shopify_order_id` on `orders_attributed`, plus `handle` (a Shopify vocabulary noun) on `tenant_products`. PO surfaced the inconsistency: "all the columns of the tables can't have platform-specific columns." The prior sweep was scope-limited; this one completes it.
+- Decision:
+  1. **All `shopify_*_id` column names renamed to `platform_*_id`** across every table:
+     - `tenant_products.shopify_product_id` → `platform_product_id`
+     - `tenant_product_variants.shopify_variant_id` → `platform_variant_id`
+     - `precomputed_recs.source_shopify_product_id` → `source_platform_product_id`
+     - `precomputed_recs.recommended_shopify_product_id` → `recommended_platform_product_id`
+     - `events.shopify_product_id` → `platform_product_id`
+     - `orders_attributed.shopify_order_id` → `platform_order_id`
+     - `orders_attributed.line_items` JSONB field key `shopify_product_id` → `platform_product_id`
+  2. **All renamed `*_id` columns retyped from `BIGINT` to `VARCHAR(64)`.** Consistent with `platform_shop_id VARCHAR(64)` from the prior split. Shopify's numeric IDs stringify losslessly; VTEX and SFCC use non-numeric IDs. Marginal index cost at MVP scale; the type change is what actually makes the columns cross-platform, not just the rename.
+  3. **`tenant_products.handle` renamed to `slug`.** `handle` is Shopify vocabulary; `slug` is the generic web term (VTEX uses `slug`, SFCC uses "URL keyword"). Column note now explicitly documents the mapping to each platform's native name so it's discoverable.
+  4. **Notes kept universal.** `product_type` and `tags` column notes were rewritten to describe the concept ("category/type", "labels") rather than reference "Shopify product type field" and "Shopify tags" — the column names were already generic but the notes were leaking.
+- Not renamed:
+  - `platform_credentials.platform` column values (`shopify`, `vtex`, `sfcc`) — those ARE the platform identifiers by definition.
+  - The `handle` reference inside the `slug` column note — that is documentation of the Shopify-native equivalent, not a schema leak.
+  - `data.md` prose references to the Shopify webhook payload's `shop_domain` field — that's the payload field name, an inherently Shopify concept, not a schema column.
+- Rejected alternatives:
+  - Prefix `external_*` instead of `platform_*` — would work but inconsistent with the already-committed `platform_shop_id` / `platform_shop_domain` naming.
+  - Keep `BIGINT` for `_id` columns and just rename — defeats the purpose; non-numeric platform IDs would need another migration.
+  - Drop the ID prefix entirely and rely on tenant scoping — reads ambiguously against the row's own `id` PK column.
+- Consequences:
+  - Every doc that referenced these column names got a pass: 5 references in `spec.md`, 4 in `data.md`, 3 in `recommendations.md`, plus 8 in `architecture.md` itself (schema tables + §5 precomputed_recs prose + §9.4 event API body shape).
+  - The API contracts in `architecture.md` §9 and `spec.md` recommendation/event API sections now expose `platform_product_id` in request/response bodies. Widget code (not yet written) will read this field name from day one; there is no pre-existing widget to migrate.
+- Made by: Product Owner (advised by claude)
+
+
 
 

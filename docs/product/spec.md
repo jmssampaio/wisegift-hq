@@ -80,7 +80,7 @@ As a merchant admin, I want my product catalog to stay in sync with WiseGift aut
 
 ### Acceptance Criteria
 - [ ] Initial full-catalog import at install using Shopify Admin API `products.json` (paginated, respecting Shopify's rate limits).
-- [ ] For each product WiseGift stores: `tenant_id`, `shopify_product_id`, `handle`, `title`, `description`, `price`, `currency`, `image_url`, `availability`, `product_type`, `tags`, `variants[]` (id, price, availability), `last_seen_at`.
+- [ ] For each product WiseGift stores: `tenant_id`, `platform_product_id`, `slug`, `title`, `description`, `price`, `currency`, `image_url`, `availability`, `product_type`, `tags`, `variants[]` (id, price, availability), `last_seen_at`.
 - [ ] Product embeddings are computed at ingest for each product (title + description + product_type + tags). Vector column on Neon pgvector.
 - [ ] The following Shopify webhooks are subscribed and processed within 60 seconds: `products/create`, `products/update`, `products/delete`, `inventory_levels/update` (for availability).
 - [ ] On `products/update` or `products/delete` the affected product row is updated; embedding is recomputed only when the description or title changes.
@@ -164,7 +164,7 @@ As a merchant admin, I want the widget's impact on my revenue to be measurable s
 - [ ] The session is deterministically assigned to **exposed** or **holdout** on first render: 90% exposed, 10% holdout. Assignment is stable across placements and page loads for the session lifetime.
 - [ ] Holdout sessions see the widget in a **placebo state**: the hook and form render identically, but the recommendation slot is either hidden or filled with a merchant-configured static fallback (never WiseGift-generated recs). Placebo is invisible to the shopper.
 - [ ] Every widget interaction fires a typed event to the WiseGift event API: `widget_shown`, `widget_engaged`, `intent_submitted`, `product_clicked`, tagged with `tenant_id`, `session_id`, `placement`, `intent_mode`, `is_holdout`, timestamp.
-- [ ] The `orders/create` Shopify webhook is received by the WiseGift backend for every merchant order. WiseGift extracts only `order_id`, `line_items[].shopify_product_id`, `line_items[].quantity`, `total_price`, `currency`, and correlates to a session via a client-side widget-planted marker (a `wg_session=<id>` query param appended to product URLs on click, or Shopify cart attribute if available). Customer PII fields are dropped at ingest and never persisted.
+- [ ] The `orders/create` Shopify webhook is received by the WiseGift backend for every merchant order. WiseGift extracts only `order_id`, `line_items[].platform_product_id`, `line_items[].quantity`, `total_price`, `currency`, and correlates to a session via a client-side widget-planted marker (a `wg_session=<id>` query param appended to product URLs on click, or Shopify cart attribute if available). Customer PII fields are dropped at ingest and never persisted.
 - [ ] Attribution report joins events + orders on `session_id` within a **7-day attribution window** from the last `product_clicked` event.
 - [ ] Merchant dashboard renders KPIs against the holdout (see Analytics dashboard feature).
 
@@ -269,8 +269,8 @@ As the widget, I want to fetch personalised recommendations for the current shop
 
 ### Acceptance Criteria
 - [ ] Endpoint: `POST /v1/recommendations`. Auth: tenant public key + short-lived signed request token issued to the widget bundle (rotates hourly).
-- [ ] Request body: `session_id`, `placement`, `intent_mode`, `intent` (relationship, occasion, budget_min, budget_max, interests[]), `context` (current `shopify_product_id` if on a PDP), `limit` (default 5).
-- [ ] Response body: `recommendations[]` (each: `shopify_product_id`, `handle`, `title`, `price`, `image_url`, `rank_score`), `cache_hit` (boolean), `served_from` (`live_llm` | `cache` | `precomputed` | `fallback`).
+- [ ] Request body: `session_id`, `placement`, `intent_mode`, `intent` (relationship, occasion, budget_min, budget_max, interests[]), `context` (current `platform_product_id` if on a PDP), `limit` (default 5).
+- [ ] Response body: `recommendations[]` (each: `platform_product_id`, `slug`, `title`, `price`, `image_url`, `rank_score`), `cache_hit` (boolean), `served_from` (`live_llm` | `cache` | `precomputed` | `fallback`).
 - [ ] The endpoint enforces the **per-tenant hard usage cap** — over-cap requests are served from precomputed cold recs, cache hit is set to true, `served_from = precomputed`.
 - [ ] The endpoint enforces the **per-session rate limit** (max 20 live-LLM calls per session per hour); over-limit requests are served from cache/precomputed.
 - [ ] p95 latency budget: **300 ms** end-to-end.
@@ -286,7 +286,7 @@ As the widget, I want to record shopper interactions so that attribution and ana
 
 ### Acceptance Criteria
 - [ ] Endpoint: `POST /v1/events`. Same auth as the recommendation API.
-- [ ] Accepts a batch of events (`events[]`), each: `event_type` (`widget_shown` | `widget_engaged` | `intent_submitted` | `product_clicked`), `session_id`, `placement`, `intent_mode`, `is_holdout`, `timestamp`, optional `shopify_product_id`, optional `rank_score` and `served_from` (echoed from the rec response).
+- [ ] Accepts a batch of events (`events[]`), each: `event_type` (`widget_shown` | `widget_engaged` | `intent_submitted` | `product_clicked`), `session_id`, `placement`, `intent_mode`, `is_holdout`, `timestamp`, optional `platform_product_id`, optional `rank_score` and `served_from` (echoed from the rec response).
 - [ ] Events are validated against a strict schema; unknown fields are rejected (fail fast on client bugs).
 - [ ] Events are enqueued and processed asynchronously into the analytics store. p95 write latency < 100 ms.
 - [ ] The endpoint is fire-and-forget from the widget's perspective — no retry storms if a request fails.
@@ -302,7 +302,7 @@ As the WiseGift backend, I want to record order events to attribute revenue lift
 ### Acceptance Criteria
 - [ ] HMAC signature verification against Shopify's shared secret; invalid signatures rejected with 401.
 - [ ] Idempotency: repeated webhooks for the same `order_id` are deduplicated.
-- [ ] From the order payload we retain only: `order_id`, `line_items[].shopify_product_id`, `line_items[].quantity`, `line_items[].price`, `total_price`, `currency`, `created_at`, `tenant_id` (derived from shop domain).
+- [ ] From the order payload we retain only: `order_id`, `line_items[].platform_product_id`, `line_items[].quantity`, `line_items[].price`, `total_price`, `currency`, `created_at`, `tenant_id` (derived from shop domain).
 - [ ] All customer PII fields (`customer`, `billing_address`, `shipping_address`, `email`, `phone`, `client_details`) are dropped at ingest and never persisted, logged, or forwarded.
 - [ ] Correlation to a widget session is done via a `wg_session` cart attribute or query-string marker planted by the widget on product-click; unattributed orders are still stored (to compute merchant-wide baselines) but do not contribute to per-session lift.
 - [ ] Webhook processing p95 < 500 ms.

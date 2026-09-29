@@ -181,7 +181,7 @@ Every response tags: `tenant_id`, `placement`, `model`, `input_tokens`, `output_
 
 - Nightly job per tenant (`03:00 UTC`, offset by tenant hash to smear load).
 - For each active SKU, compute top-N recommendations using vector nearest-neighbour + heuristic ranking (price band, category diversity). No LLM calls.
-- Stored in `precomputed_recs (tenant_id, source_shopify_product_id, rank, recommended_shopify_product_id, computed_at)`.
+- Stored in `precomputed_recs (tenant_id, source_platform_product_id, rank, recommended_platform_product_id, computed_at)`.
 - Served instantly when the live path is over-cap, over-limit, kill-switched, or missing intent signal.
 - Re-run on catalog changes exceeding a per-tenant threshold (e.g. >5% of SKUs updated in a day).
 
@@ -296,9 +296,9 @@ Per-tenant catalog snapshot. One row per Shopify product per tenant.
 | Column | Type | Notes |
 |---|---|---|
 | id | BIGINT | PK, auto-increment |
-| tenant_id | UUID | Indexed with `(tenant_id, shopify_product_id)` unique |
-| shopify_product_id | BIGINT | |
-| handle | VARCHAR(255) | |
+| tenant_id | UUID | Indexed with `(tenant_id, platform_product_id)` unique |
+| platform_product_id | VARCHAR(64) | Source-of-truth product ID from the merchant's platform. Shopify: numeric shop_id stringified. VTEX: product ID. SFCC: master product ID. Stringly typed for cross-platform consistency (see `decisions.md` 2026-09-29) |
+| slug | VARCHAR(255) | URL slug on the merchant's storefront. Shopify: `handle`. VTEX: `slug`. SFCC: URL keyword |
 | title | VARCHAR(500) | |
 | description | TEXT | |
 | price_min | DECIMAL(12,2) | Min across variants |
@@ -321,7 +321,7 @@ Per-tenant catalog snapshot. One row per Shopify product per tenant.
 | id | BIGINT | PK |
 | tenant_id | UUID | |
 | tenant_product_id | BIGINT | FK |
-| shopify_variant_id | BIGINT | |
+| platform_variant_id | VARCHAR(64) | Source-of-truth variant ID from the merchant's platform |
 | price | DECIMAL(12,2) | |
 | available | BOOLEAN | |
 
@@ -372,10 +372,10 @@ Composite PK `(tenant_id, version)`.
 
 | Column | Type | Notes |
 |---|---|---|
-| tenant_id | UUID | Indexed with `(tenant_id, source_shopify_product_id)` |
-| source_shopify_product_id | BIGINT | |
+| tenant_id | UUID | Indexed with `(tenant_id, source_platform_product_id)` |
+| source_platform_product_id | VARCHAR(64) | |
 | rank | INTEGER | 1..N |
-| recommended_shopify_product_id | BIGINT | |
+| recommended_platform_product_id | VARCHAR(64) | |
 | computed_at | TIMESTAMPTZ | |
 
 ### `sessions`
@@ -401,7 +401,7 @@ Widget event stream (append-only).
 | placement | VARCHAR(32) | |
 | intent_mode | VARCHAR(8) | `self`, `gift`, or null |
 | is_holdout | BOOLEAN | Denormalised from `sessions` for query speed |
-| shopify_product_id | BIGINT | Nullable |
+| platform_product_id | VARCHAR(64) | Nullable |
 | rank_score | DECIMAL(6,4) | Nullable |
 | served_from | VARCHAR(16) | Nullable |
 | intent_form_schema_version | INTEGER | Nullable. Set only when `event_type='intent_submitted'`; identifies which `intent_form_schemas.version` the payload conforms to, so the v2 learning loop can read historical events across schema upgrades without a backfill. See `decisions.md` 2026-09-29 |
@@ -413,12 +413,12 @@ Order webhook, filtered at ingest (no customer PII).
 
 | Column | Type | Notes |
 |---|---|---|
-| shopify_order_id | BIGINT | PK |
+| platform_order_id | VARCHAR(64) | PK |
 | tenant_id | UUID | |
 | session_id | UUID | Nullable if not correlated |
 | total_price | DECIMAL(12,2) | |
 | currency | VARCHAR(3) | |
-| line_items | JSONB | `[{shopify_product_id, quantity, price}, ...]`; only these fields retained |
+| line_items | JSONB | `[{platform_product_id, quantity, price}, ...]`; only these fields retained |
 | received_at | TIMESTAMPTZ | |
 
 ### `cost_telemetry` (optional durable store)
@@ -477,7 +477,7 @@ Fetch personalised recommendations for the current shopper's intent.
 Emit a batch of widget interaction events.
 
 - Auth: signed token
-- Body: `{ events: [ { event_type, session_id, placement, intent_mode, is_holdout, occurred_at, shopify_product_id?, rank_score?, served_from? } ] }` (max 10)
+- Body: `{ events: [ { event_type, session_id, placement, intent_mode, is_holdout, occurred_at, platform_product_id?, rank_score?, served_from? } ] }` (max 10)
 - Response: `{ accepted: N }`
 - p95 write latency < 100 ms; fire-and-forget from widget
 
