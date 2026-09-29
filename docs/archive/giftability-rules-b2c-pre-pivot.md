@@ -67,12 +67,12 @@ the recommendation slate never surfaces broken cards.
 |---|---|---|---|
 | A-Q-01 | Required fields | `name`, `price`, `currency`, `image_url`, `affiliate_url`, `country`, `merchant_id` all non-null / non-blank | `active=false`, `rejection_reason=MISSING_REQUIRED_FIELD` |
 | A-Q-02 | Price plausibility | `5.00 <= price <= 2000.00` in EUR (or currency-equivalent post-conversion at time of ingest) | `active=false`, `rejection_reason=PRICE_OUT_OF_RANGE` |
-| A-Q-03 | Image reachable | HTTP HEAD on `image_url` returns 200 AND `Content-Type` starts with `image/` | `active=false`, `rejection_reason=IMAGE_UNREACHABLE` |
+| A-Q-03 | Image URL shape | `image_url` is non-blank and starts with `http://` or `https://`. **MVP-scoped** — the original doc mandated an HTTP HEAD returning 200 + `Content-Type: image/*`, deferred because 300k+ HEAD calls per sync need a bounded thread pool, cache, and timeouts — its own future PR. URL-shape check catches malformed values only. | `active=false`, `rejection_reason=INVALID_IMAGE_URL` |
 | A-Q-04 | Description length | `length(description) >= 50` after trim (or synthesised description for Amazon PA-API) | `active=false`, `rejection_reason=DESCRIPTION_TOO_SHORT` |
 | A-Q-05 | Title length | `5 <= length(name) <= 200` | `active=false`, `rejection_reason=TITLE_INVALID` |
 | A-Q-06 | Currency supported | `currency IN ('EUR', 'GBP', 'USD')` — expand as markets expand | `active=false`, `rejection_reason=CURRENCY_UNSUPPORTED` |
 | A-Q-07 | Country supported | `country IN ('ES', 'PT', 'US', 'CO', NULL)` — NULL is accepted (Amazon PA-API path) | `active=false`, `rejection_reason=COUNTRY_UNSUPPORTED` |
-| A-Q-08 | In-stock | Feed's stock/availability field indicates in-stock; if the field is absent, gate FAILS unless the per-network ingestor synthesises presence from an equivalent signal (e.g. `quantity > 0`, `availability = "in_stock"`, or merchant-specific field). Per-merchant field mapping lives in the ingestor's per-network normalizer, not in this doc. | `active=false`, `rejection_reason=OUT_OF_STOCK` |
+| A-Q-08 | In-stock | Rejects when the feed **explicitly** reports out-of-stock via **either** signal: `in_stock = false` OR `stock_quantity <= 0`. **MVP-scoped: fail-open on double-null** — many Awin feeds (ECI observed 2026-07) leave `in_stock` blank; checking `stock_quantity` as a fallback catches the common ECI case. When both signals are null (unknown), the row is accepted. Further per-merchant availability heuristics belong in Layer B. | `active=false`, `rejection_reason=OUT_OF_STOCK` |
 | A-Q-09 | Active-in-date | Feed's `validFrom`/`validTo` window (when present) covers `now()` | `active=false`, `rejection_reason=OFFER_EXPIRED` |
 | A-Q-10 | Deep-link parseable | `affiliate_url` matches the expected pattern for the merchant network (Awin deep-link format, Amazon `/dp/{ASIN}?tag=`, Tradedoubler tracking URL) | `active=false`, `rejection_reason=AFFILIATE_URL_INVALID` |
 
