@@ -327,6 +327,17 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-29 — Docs housekeeping: stale references cleaned + GTM easy closures
+- Context: A cross-doc sweep for open questions found six stale references to items already resolved in later decision entries (embedding provider, intent_form_schema_version on events, cost telemetry destination, EU consent posture, tenants.feature_flags column), plus two GTM questions that were effectively answered by other 2026-09-29 decisions but still sat in the `gtm-b2b.md` Open questions list. Left in place they'd waste future readers' time chasing already-decided items.
+- Decisions:
+  1. **`data.md` §6 embedding provider choice, §8 intent-form open question, §9 cost telemetry shape, and §11 EU consent** — all rewritten from TBD/open-question language to reflect their settled state. Each carries a cross-ref to the resolving decision entry.
+  2. **`recommendations.md` §10 feature_flags follow-up note** — rewritten to reflect that the column is already present in `architecture.md` §8.
+  3. **`gtm-b2b.md` Open questions section** — added a Resolved subsection. Moved "Region: EU-only for pilots" (answered by Frozen MVP scope) and "Shopify Partner registration timing" (answered by Custom-app pilot billing, Path B needs Partner registration before day 60). Updated remaining three items with current state: DPA template + sub-processor list drafts are in flight with `security-and-privacy` as of today; the legal/tax vehicle question is parked as "awaiting external legal counsel" so it stops looking like an unassigned agent task.
+  4. **Spawned `security-and-privacy`** to draft `docs/legal/dpa-template.md` and `docs/legal/sub-processors.md` — informational only, not legal advice; attorney sign-off still required before first paying merchant.
+- Rejected: doing this as a big text-search-and-replace pass without cross-refs to the resolving decisions. The cross-refs are the point — future readers should be able to walk from the stale-looking spot straight to why it was closed.
+- Follow-up: Redis vendor and widget CDN vendor picks still open, routed to `devops-expert`. Will land as short decision entries when picked, not blocking anything today.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-09-29 — Widget theming UX questions closed (2 items)
 - Context: The Widget theming decision entry (2026-09-29 "two-layer model") flagged two UX questions from the product-analyst draft: (1) how the "auto-inherit banner" detects which Shopify CSS variables the theme actually exposes; (2) reset semantics — tenant-type-specific labels ("Reset to auto-inherit" vs "Reset to WiseGift default") or unified.
 - Decisions:

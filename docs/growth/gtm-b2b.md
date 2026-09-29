@@ -184,13 +184,16 @@ MVP ships a **single generic intent form**. Verticalised packs land in the relea
 
 ## Open questions (to close before we start selling)
 
-- Legal / tax vehicle for taking payment from EU merchants? (SPV, sole trader, Stripe Connect setup)
-- Data processor DPA template — needed on day 1 for any merchant conversation.
-- Sub-processor list (Neon, Anthropic, hosting, monitoring) — merchants will ask.
-- Region: are pilot merchants OK with EU-hosted data only, or do we need US region for future pilots?
-- Do we register as a Shopify Partner immediately (needed to publish an app), or start with a custom app per pilot merchant?
+- **Legal / tax vehicle for taking payment from EU merchants** — awaiting external legal counsel. Options identified (SPV, sole trader, Stripe Connect); picking requires legal advice we cannot obtain from an in-repo agent. PO to engage a qualified attorney before first paying merchant contract.
+- **Data processor DPA template** — draft in progress by `security-and-privacy` (spawned 2026-09-29). Attorney sign-off still required before first paying merchant.
+- **Sub-processor list** — draft in progress by `security-and-privacy` (spawned 2026-09-29). Two vendor picks still open — Redis provider and widget CDN (Cloudflare or Fastly). `devops-expert` calls; will land as separate short decision entries.
 
-*Route to `privacy-legal-advisor` and `devops-expert` respectively.*
+*Route to `security-and-privacy` (DPA + sub-processors — informational only, not legal advice) and `devops-expert` (Redis + CDN vendor picks).*
+
+## Resolved questions
+
+- **Region: EU-only for pilots** (2026-09-29): EU-only hosting is the MVP posture. Adding US region requires an explicit PO decision + DPA update; not before a signed US pilot. See `docs/decisions.md` 2026-09-29 "Frozen MVP scope".
+- **Shopify Partner registration timing** (2026-09-29): Register as Shopify Partner immediately, not per-pilot. Required to submit the public app for review by day 60 of the first pilot under the Custom-app pilot billing decision (Path B). Custom-app installs during pilot phase use the same Partner-dashboard credentials. See `docs/decisions.md` 2026-09-29 "Custom-app pilot billing".
 
 ---
 

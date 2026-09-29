@@ -297,11 +297,12 @@ This lets us:
 
 ### Provider choice
 
-**TBD at the first ingestion PR.** `architecture.md` §1 lists Anthropic or
-OpenAI as candidates and notes the decision drives the vector column
-dimensionality. This doc deliberately does not pick — the choice is a
-recommendations-specialist + backend joint decision, not a data-model
-one. What this doc commits to: whichever provider is picked, the model
+**OpenAI `text-embedding-3-small` (1536d, Matryoshka-reducible)** — settled
+2026-09-29 (see `decisions.md` "Architecture open questions closed"). EU
+covered via OpenAI DPA. Column stays `vector(1536)`; halving to 512d via
+Matryoshka is a query-latency lever we can pull without re-embedding if it
+becomes worth it. What this doc commits to: whichever provider is used, the
+model
 version lives on every row, and switching is a per-tenant re-embed job.
 
 ---
@@ -367,20 +368,20 @@ required/optional flags. It does not include styling — that is
 `widget_config`. It does not include the ranking prompt — that is the
 Recommendation module's concern.
 
-**Open question for PO:** the `intent_submitted` event does not currently
-carry the intent-form schema version it was answered against. If we plan
-to run the learning loop across a tenant's schema upgrade, we need it.
-Cheap to add on the event; expensive to backfill. Recommend adding
-`intent_form_schema_version` to the `intent_submitted` event payload from
-day one.
+**Settled 2026-09-29** (see `decisions.md` "Resolved 6 open questions"):
+every `intent_submitted` event carries an `intent_form_schema_version`
+column (see §5), so the v2 learning loop can read historical payloads
+across tenant schema upgrades without a backfill.
 
 ---
 
 ## 9. Cost telemetry
 
 **Owner:** Recommendation module + shared telemetry infrastructure.
-**Shape:** either a stream (Prometheus / OpenTelemetry — decision TBD in
-`architecture.md` §14) or a durable `cost_telemetry` table (also in §8).
+**Shape:** durable `cost_telemetry` table in Postgres at MVP (see §8);
+promoted to Grafana Cloud EU post-MVP once volume + query patterns are
+known — settled 2026-09-29 (see `decisions.md` "Architecture open
+questions closed").
 
 Every recommendation call emits a tagged sample, unsampled — no
 statistical sampling. The tag set is fixed: `tenant_id`, `placement`,
@@ -398,10 +399,6 @@ Two consumers:
 Why unsampled: pilot volumes are low enough that sampling loses fidelity
 on outlier tenants, and outlier tenants are exactly the ones we need to
 see (a runaway cost is a per-tenant event, not a fleet-average event).
-
-**Decision deferred:** stream vs durable table. `architecture.md` marks
-this as TBD at the first devops PR. This data doc treats them as
-equivalent for now — the field set is the same either way.
 
 ---
 
@@ -468,13 +465,17 @@ issuance.
 
 ### On EU consent
 
-Whether a first-party session identifier requires explicit consent under
-some EU regimes even without cross-site tracking is an open question
-routed to security-and-privacy (see `spec.md` and `architecture.md` open
-questions). This data model does not pre-decide the answer — if consent
-is required, the widget delays session-ID creation until consent is
-granted, and the data model is unchanged (rows just get created later or
-not at all).
+Settled 2026-09-29 (see `decisions.md` "Widget consent for EU"): no
+Consent Mode integration at MVP; the widget ships with a
+`window.Shopify.customerPrivacy` escape-hatch code path, and
+`tenants.consent_mode_required BOOLEAN` (default `false`) lets support
+flip stricter merchants into fallback-always without a code change. When
+consent is denied or `consent_mode_required=true`, the widget skips
+localStorage / session-ID / event emission — the data model is unchanged,
+rows just don't get created for those sessions, and holdout falls back to
+a per-request coin flip with `attribution_mode=degraded` recorded on the
+backend for honest reporting. Position paper for pilot DPOs at
+`docs/legal/consent-position.md`.
 
 ---
 

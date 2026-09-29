@@ -512,9 +512,9 @@ data-model side were settled the same day in `data.md`. Remaining open items:
    land the fixture set + harness first, run it against the initial
    ranker, then set the margin from observed variance. Confirm approach.
 
-Consequence of the Sonnet decision (§6.1): `tenants.feature_flags` JSONB
-column must be added to `architecture.md` §8 and to the first
-tenant-module PR. Not optional.
+Consequence of the Sonnet decision (§6.1) landed: `tenants.feature_flags`
+JSONB column is present in `architecture.md` §8 as of 2026-09-29. The
+first tenant-module PR reads/writes it directly.
 
 ---
 
