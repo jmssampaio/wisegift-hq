@@ -1,3 +1,20 @@
+# [ARCHIVED — 2026-09-29] MVP — Critical Path (pre-B2B-pivot)
+
+> **This document is archived.** It describes the pre-2026-09-29 B2C MVP
+> critical path (multi-merchant affiliate catalog + dynamic feed + user-published
+> collections on Flutter web). After the strategic pivot to a B2B recommendation
+> platform for e-commerce merchants (see `docs/decisions.md` entries dated
+> 2026-09-29), this MVP is no longer the target.
+>
+> **For the current MVP scope, read `docs/product/spec.md`.**
+>
+> Content preserved below unchanged for historical context — the Flutter B2C
+> play may be revived post-MVP as a WiseGift-branded storefront over
+> participating merchant catalogs (see the Roadmap section of the current
+> spec).
+
+---
+
 # MVP — Critical Path
 
 Web-first. Solo founder. Ship the thinnest end-to-end version a real user could use to find a gift and generate a merchant click. Everything not on this path is deferred.

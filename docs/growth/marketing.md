@@ -1,3 +1,0 @@
-# WiseGift — Marketing
-## Positioning
-## Messaging

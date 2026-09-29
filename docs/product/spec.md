@@ -1,378 +1,384 @@
 # WiseGift — Specifications
 
+> B2B rewrite. Supersedes the pre-2026-09-29 B2C spec, which described a consumer gift-discovery app on a shared affiliate catalog. Historical context is in `docs/decisions.md` (entries dated 2026-09-29).
+
 ## Vision
 
-WiseGift is a gift-discovery mobile app (iOS and Android, built with Flutter) for people who want to give thoughtful, well-chosen gifts without the guesswork. Registered users build a personal agenda of contacts and occasions, get AI-ranked product recommendations drawn from an affiliate catalog, and curate shareable gift collections ("storefronts") that anyone — with or without an account — can browse on the web. Guests can browse editorial collections and run the AI Gift Curator without signing in; creating an account unlocks the full agenda, social, and collection features.
+WiseGift sells **AI recommendation infrastructure to e-commerce merchants**, delivered as an embeddable frontend widget on the merchant's storefront. The widget hooks the shopper with a gift-framed question ("Are you looking for something for you or for someone else?"), captures intent, and calls WiseGift micro-APIs for personalised recommendations drawn from the merchant's own catalog. General recommendations for self-purchase are equally supported — the gift use case is the differentiator, not the whole surface.
+
+**MVP platform: Shopify.** Follow-ons: VTEX, Salesforce Commerce Cloud, custom via REST.
 
 ---
 
-## Feature: Authentication — Email and Password
+## Product surface (MVP at a glance)
+
+Three surfaces, one shared multi-tenant backend:
+
+1. **Widget** — embedded JavaScript on the merchant's storefront (home / PDP / dedicated gift-finder page). Preact + Web Components, ≤ 50 KB gzipped, async, lazy.
+2. **Merchant admin dashboard** — web app where the merchant installs, configures placements, edits intent-form copy, and sees the analytics dashboard. Hosted by WiseGift.
+3. **Recommendation & event APIs** — the micro-APIs the widget calls to fetch recs and emit events. Same APIs power any future platform integration.
+
+---
+
+## Personas
+
+### Merchant admin
+The person at the merchant who installs the Shopify app, configures the widget, and reads the analytics. Usually the e-commerce manager or the growth/marketing lead. Not a developer.
+
+### Widget shopper
+Any visitor to the merchant's storefront who sees or interacts with a WiseGift widget. Anonymous by default — WiseGift never receives the shopper's identity.
+
+---
+
+## Platform scope
+
+| Platform | MVP | Post-MVP |
+|---|---|---|
+| Shopify (App Store public app + Theme App Extension) | ✓ | — |
+| Shopify (custom app install for pilots) | ✓ | — |
+| VTEX | — | ✓ |
+| Salesforce Commerce Cloud | — | ✓ |
+| Custom / headless via REST | — | ✓ |
+
+---
+
+## Feature: Merchant onboarding — Shopify app install
 
 ### User Story
-As a visitor, I want to sign in with my email address and password so that I can access my personal data and gift collections.
+As a merchant admin, I want to install WiseGift from the Shopify App Store (or as a custom app during pilot) so that I can start showing gift recommendations on my storefront without engineering work.
 
 ### Acceptance Criteria
-- [ ] The login screen presents an email field and a password field.
-- [ ] The email field validates that an "@" symbol is present; the password field validates a minimum length of 6 characters.
-- [ ] Tapping "Login" while fields are invalid shows inline validation messages and does not submit.
-- [ ] A successful sign-in clears the navigation stack and lands the user on the Home screen.
-- [ ] An unsuccessful sign-in (wrong credentials or network error) shows a snackbar with the error message; the form stays open.
-- [ ] While the sign-in request is in flight, the form controls are disabled and a loading indicator is visible.
-- [ ] A "Don't have an account?" link navigates to the registration flow.
+- [ ] Public App Store listing includes app icon, screenshots, pricing tiers, and a data-processing summary.
+- [ ] Install flow uses standard Shopify OAuth; the merchant approves the requested scopes (`read_products`, `read_orders` for attribution, `write_theme_extensions` for widget injection).
+- [ ] On successful OAuth, a `tenant` record is created in the shared WiseGift database with `tenant_id`, shop domain, Shopify shop ID, install timestamp, region (EU), and a placeholder vertical (defaults to `generic`).
+- [ ] The merchant is redirected to the WiseGift admin dashboard's onboarding wizard.
+- [ ] During the pilot phase, a merchant can install as a **custom app** created in their Shopify partner dashboard using the same OAuth flow — no App Store listing required.
+- [ ] Uninstall via Shopify triggers WiseGift's `app/uninstalled` webhook; tenant is soft-deleted (retained 30 days for reactivation, then hard-purged with all shopper events).
+- [ ] All data written during install is stored in the EU region.
 
 ---
 
-## Feature: Authentication — Google Sign-In
+## Feature: Merchant onboarding — Onboarding wizard
 
 ### User Story
-As a visitor, I want to sign in with my Google account so that I can access WiseGift without creating a separate password.
+As a merchant admin, I want a guided setup after install so that the widget is live on my storefront within 15 minutes without me needing to read documentation.
 
 ### Acceptance Criteria
-- [ ] The login screen presents a "Sign in with Google" button.
-- [ ] Tapping the button opens the platform Google account picker.
-- [ ] A successful Google sign-in clears the navigation stack and lands the user on the Home screen.
-- [ ] A failed or cancelled Google sign-in shows a snackbar with a descriptive error message.
-- [ ] While the flow is in progress, the button is disabled and a loading indicator is shown.
+- [ ] Step 1 — **Vertical selection**: the merchant picks their primary vertical from a fixed list (Fashion, Beauty, Home, Tech, Books, Food, Kids, Jewelry, Other). MVP treats all verticals identically at the intent-form level, but the choice is stored on the tenant record for future verticalised packs.
+- [ ] Step 2 — **Catalog sync**: WiseGift kicks off the initial catalog import from the Shopify Admin API. A progress indicator shows product count ingested. First-time sync of up to 10k SKUs must complete in under 15 minutes; larger catalogs continue in the background and the wizard proceeds.
+- [ ] Step 3 — **Widget placement**: the merchant picks at least one placement (Home hero, PDP recommendation slot, dedicated gift-finder page). Each placement is a Theme App Extension block the merchant enables in the Shopify theme editor via a "Configure in Shopify" deep link.
+- [ ] Step 4 — **Preview**: an inline preview of the widget rendered against the merchant's own theme colours and typography. The merchant can adjust the intent-hook copy from a preset library (5 options in EN + ES + PT) or write custom copy.
+- [ ] Step 5 — **Go live**: enabling the tenant flips `tenant.active = true`. From this moment the widget renders live for shoppers and events start being recorded.
+- [ ] The onboarding wizard is resumable — closing the browser and returning drops the merchant back at the incomplete step.
 
 ---
 
-## Feature: Registration — Four-Step Account Creation
+## Feature: Merchant onboarding — Catalog sync
 
 ### User Story
-As a visitor, I want to create a WiseGift account through a guided four-step form so that my profile contains enough information for personalised recommendations from the start.
+As a merchant admin, I want my product catalog to stay in sync with WiseGift automatically so that recommendations always reflect what's actually available in my store.
 
 ### Acceptance Criteria
-
-**Step 1 — Credentials**
-- [ ] The user enters first name, last name, email address, and password.
-- [ ] The step label reads "Step 1 of 4" with a progress bar at 25 %.
-- [ ] On success, a Firebase Auth account is created and the user advances to Step 2.
-- [ ] On failure (e.g., email already in use), a snackbar shows the error and the form remains open.
-
-**Step 2 — Personal details**
-- [ ] The user enters a username, date of birth (selected from a date picker), and an optional phone number.
-- [ ] The step label reads "Step 2 of 4" with the progress bar at 50 %.
-- [ ] On save, a Firestore user profile document is created with the supplied fields.
-- [ ] The user advances to Step 3.
-
-**Step 3 — Location and gender**
-- [ ] The user selects a residence country from a searchable country picker and selects a gender (Male / Female / Other).
-- [ ] Both fields are required; attempting to continue without selecting both shows a snackbar error.
-- [ ] The step label reads "Step 3 of 4" with the progress bar at 75 %.
-- [ ] On save, the country code and gender are written to the Firestore profile; the user advances to Step 4.
-
-**Step 4 — Interests**
-- [ ] The user can select zero or more interests from a predefined list.
-- [ ] The step label reads the interests screen title with the progress bar at 100 %.
-- [ ] Tapping "Finish setup" saves the interest list to Firestore and advances to the contact import screen.
-- [ ] A "Skip for now" link advances to the contact import screen without saving interests.
+- [ ] Initial full-catalog import at install using Shopify Admin API `products.json` (paginated, respecting Shopify's rate limits).
+- [ ] For each product WiseGift stores: `tenant_id`, `shopify_product_id`, `handle`, `title`, `description`, `price`, `currency`, `image_url`, `availability`, `product_type`, `tags`, `variants[]` (id, price, availability), `last_seen_at`.
+- [ ] Product embeddings are computed at ingest for each product (title + description + product_type + tags). Vector column on Neon pgvector.
+- [ ] The following Shopify webhooks are subscribed and processed within 60 seconds: `products/create`, `products/update`, `products/delete`, `inventory_levels/update` (for availability).
+- [ ] On `products/update` or `products/delete` the affected product row is updated; embedding is recomputed only when the description or title changes.
+- [ ] On `inventory_levels/update` the `availability` field is updated but embedding is untouched.
+- [ ] Unavailable products (all variants out of stock or archived) are excluded from recommendation candidates but retained in the DB.
+- [ ] Nightly reconciliation job re-fetches the catalog and diffs against the DB to catch any webhook that was missed.
+- [ ] Catalog size at any time is visible to the merchant on the admin dashboard.
 
 ---
 
-## Feature: Onboarding — Device Contact Import
+## Feature: Widget — Embed and lifecycle
 
 ### User Story
-As a newly registered user, I want to import my phone contacts at the end of registration so that WiseGift can automatically populate birthday reminders for people I care about.
+As a widget shopper, I want the widget to load without slowing down the merchant's page so that my browsing experience is not disrupted.
 
 ### Acceptance Criteria
-- [ ] After completing (or skipping) Step 4, the user sees an onboarding screen explaining the contact import benefit.
-- [ ] Tapping "Import My Contacts" triggers a system permission request for contacts access.
-- [ ] If permission is granted, the app reads all contacts that have a birthday event, extracts names and birthday dates, and stores them in the user's birthday agenda in Firestore.
-- [ ] During import, a progress indicator is displayed; the user cannot interact with the controls.
-- [ ] After import (success or failure), the user is navigated to the Home screen with the full navigation stack cleared.
-- [ ] Tapping "Maybe Later" skips the import and navigates directly to the Home screen.
-- [ ] If the import fails, a snackbar notifies the user and the app proceeds to the Home screen.
+- [ ] Widget bundle is served from a WiseGift-controlled CDN with cache headers that permit long TTL + hash-based cache-busting.
+- [ ] The Theme App Extension block includes a single `<script async src="…/widget.js">` tag (or Shopify's block-native equivalent). No render-blocking assets.
+- [ ] Total gzipped payload of `widget.js` is ≤ **50 KB**.
+- [ ] The widget renders inside a `<wisegift-widget>` **Web Component with Shadow DOM** — all styles are isolated from the merchant's theme.
+- [ ] Time-to-interactive of the widget (from script fetch complete → widget accepts user input) is < **100 ms** at p95.
+- [ ] Recommendation content is **lazy** — no `/recommendations` API call is made until either (a) the widget scrolls into the viewport (IntersectionObserver) or (b) the shopper interacts with the intent hook.
+- [ ] The widget passes a Lighthouse Performance audit on a representative merchant page with score ≥ 90 with the widget enabled vs. without.
 
 ---
 
-## Feature: Home Screen — Navigation Shell
+## Feature: Widget — Gift intent hook
 
 ### User Story
-As a user, I want a persistent bottom navigation bar so that I can switch between the main sections of the app at any time.
+As a widget shopper, I want a friendly question that helps the widget understand whether I'm shopping for myself or a gift so that the recommendations match my intent.
 
 ### Acceptance Criteria
-- [ ] Logged-in users see five tabs: Home, Discover, Agenda, AI Curator, and Profile (labelled with the user's username once loaded).
-- [ ] Guest (not logged-in) users see four tabs: Home, Discover, AI Curator, and Sign In.
-- [ ] Tapping "Sign In" from the guest navigation opens the login screen as a modal page rather than replacing the tab content.
-- [ ] The active tab is visually distinguished from inactive tabs.
-- [ ] A notification bell icon is shown in the app bar for logged-in users. An unread-count badge appears when there are unread notifications.
-- [ ] Tapping the notification bell navigates to the Notifications screen.
-- [ ] When the user is on the Agenda tab (index 2, logged in), a floating action button labelled "Add Occasion" is visible; tapping it opens the Create Occasion screen.
+- [ ] The widget renders a hook prompt (default: "Are you looking for something for you, or for someone else?") with two primary buttons: **For me** and **For someone else**.
+- [ ] Merchant admins can override the prompt copy from a preset library or with custom text (Merchant admin — Widget configuration feature).
+- [ ] Selecting **For me** routes the shopper to the general-recommendations intent flow (budget + interests optional; can also submit with no additional input on a PDP-context placement).
+- [ ] Selecting **For someone else** routes to the gift-intent flow (recipient relationship, occasion, budget, optional interests).
+- [ ] Both flows share the same downstream API — the intent object carries an `intent_mode: "self" | "gift"` field.
+- [ ] The hook is skippable on PDP placements: if the shopper does nothing, the widget still shows recommendations based on the current product context after 3 seconds (fires a widget-shown event but no intent capture).
+- [ ] Widget copy is available in EN, ES, PT at MVP.
 
 ---
 
-## Feature: Home Screen — Curated Collections Feed
+## Feature: Widget — Intent capture form (generic MVP)
 
 ### User Story
-As a user, I want to browse editorially curated gift collections on the Home screen so that I can discover gift ideas even before I know exactly what I'm looking for.
+As a widget shopper, I want a short form to describe what I'm looking for so that recommendations are relevant to me or my gift recipient.
 
 ### Acceptance Criteria
-- [ ] The Home tab displays a grid of curated collection cards, each showing a cover image, title, and starting price.
-- [ ] Collection cards carry a "CURATED" badge.
-- [ ] A horizontal chip bar lets the user filter collections by category (All, Birthday, Wedding, Baby). Selecting a category shows only matching collections.
-- [ ] Logged-out users see a "Gift Discovery" hero banner above the grid with a call-to-action button that scrolls down to the collections.
-- [ ] Logged-in users see an "Upcoming" banner above the grid that shows their next chronological occasion (name, date, and days remaining). Tapping the banner navigates to that occasion's detail page.
-- [ ] Logged-in users can tap a heart icon on any curated collection card to save or unsave it. Saved collections appear in a "Saved Collections" section on the Profile tab.
-- [ ] Logged-out users who tap the heart are shown a bottom sheet prompting them to join or sign in.
+- [ ] **Self-intent form** fields (all optional): budget (min/max), interests (free-text chips, max 5).
+- [ ] **Gift-intent form** fields: recipient relationship (Partner / Family / Friend / Colleague / Other — required), occasion (Birthday / Anniversary / Wedding / Baby / Christmas / Housewarming / Just because / Other — required), budget min/max (required), interests (free-text chips, max 5, optional).
+- [ ] The form is a single scrollable card, not a multi-step wizard — form completion in < 20 seconds is the design target.
+- [ ] The form's field schema is stored per tenant and versioned (`intent_form_schema_version` on the tenant record) so verticalised packs (post-MVP) can be introduced without breaking existing widgets.
+- [ ] Submit button is disabled until required fields are filled; validation is inline.
+- [ ] Submitting fires the recommendation call and shows a loading state; recommendations appear in < 1 second at p95.
 
 ---
 
-## Feature: Product Discovery (Explore / Search)
+## Feature: Widget — Recommendation display
 
 ### User Story
-As a user, I want to search and browse products from the catalog so that I can find specific gifts and save them to my wish list.
+As a widget shopper, I want to see a small set of relevant product recommendations so that I can quickly decide what to buy.
 
 ### Acceptance Criteria
-- [ ] The Discover tab shows a text search bar. On load, a default set of products is fetched and displayed.
-- [ ] Typing in the search bar triggers a debounced search (500 ms) against the backend catalog. A minimum of 2 characters is required before a search fires.
-- [ ] Clearing the search field resets the results to the default recommendations.
-- [ ] Filter controls allow the user to narrow results by budget range, occasion, age range, and gender. Changing a filter immediately re-fetches results.
-- [ ] Each product card shows the product image, name, price, and a toggle-wishlist button.
-- [ ] Logged-in users can tap the wishlist toggle to add or remove a product from their wish list. The toggle state reflects the current wish-list state.
-- [ ] Logged-out users can view product cards but cannot save them (no wishlist toggle action for unauthenticated users).
-- [ ] A loading indicator is shown while a search or filter is in progress.
+- [ ] Recommendations render as a horizontal scrollable strip of product cards on desktop; vertical stack on mobile.
+- [ ] Each card shows product image, title, price, and a **View product** CTA that navigates to the merchant's own product page (`/products/{handle}`) in the same tab.
+- [ ] Default set size is 5 products. Configurable per placement (3–10) by the merchant.
+- [ ] If fewer than the requested number of candidates pass the ranking threshold, the widget shows the products it has (never pads with irrelevant items).
+- [ ] Click on a product card fires a `product-clicked` event before navigating.
+- [ ] If the recommendation call fails or returns zero results, the widget renders a graceful fallback (top-N merchant bestsellers or precomputed cold recs for the current PDP), never an error message visible to the shopper.
 
 ---
 
-## Feature: AI Gift Curator (Gift Agent)
+## Feature: Widget — Attribution & session tracking
 
 ### User Story
-As a user, I want an AI-powered gift finder that walks me through a short questionnaire so that I get a curated list of personalised, budget-appropriate gift ideas without needing to search.
+As a merchant admin, I want the widget's impact on my revenue to be measurable so that I can trust WiseGift's lift claims.
 
 ### Acceptance Criteria
-
-**Step 1 — Recipient**
-- [ ] The user optionally enters the recipient's name.
-- [ ] The user selects the relationship type: Friend, Partner, Parent, or Other.
-- [ ] The user selects an age range from a predefined list (Baby, Toddler, Child, Teen, Adult, Senior) or types an exact age.
-- [ ] The user selects a gender preference: Any, Female, or Male.
-- [ ] A step indicator shows "Recipient" as the active step.
-
-**Step 2 — Occasion**
-- [ ] The user selects one occasion type from a 4-column grid: Birthday, Christmas, Wedding, Anniversary, Baby Shower, Graduation, Housewarming, Other.
-- [ ] A step indicator shows "Occasion" as the active step.
-
-**Step 3 — Budget and Interests**
-- [ ] The user enters a maximum budget in euros. The default hint is 100.
-- [ ] The user can add free-text interest tags (e.g., "hiking", "coffee"). Tags can be removed with a chip delete button.
-- [ ] A summary card recaps the selections from Steps 1 and 2.
-- [ ] A step indicator shows "Budget" as the active step.
-- [ ] Tapping "Find Gifts" sends the input to the backend AI recommendation endpoint.
-
-**Results**
-- [ ] While the AI pipeline runs, a full-screen loading state is shown with copy indicating the AI is working.
-- [ ] On success, the user is navigated to a results list showing each recommended gift as a card with product image, name, and source (e.g., eBay).
-- [ ] Tapping a gift card opens the product's affiliate URL in the device's default browser.
-- [ ] On error, a snackbar describes the failure and the user remains on the curator screen.
-- [ ] The AI Curator is accessible to both logged-in and logged-out users.
-- [ ] The recommendation request uses the logged-in user's `residenceCountry` from their Firestore profile. For guests, the country is resolved via IP geolocation, falling back to device locale, then `US`.
+- [ ] On first widget render for a browser, the widget generates an **anonymous session ID** (UUID v4, 30-day sliding TTL) and stores it in localStorage under a WiseGift-scoped key. No merchant customer identity is attached.
+- [ ] The session is deterministically assigned to **exposed** or **holdout** on first render: 90% exposed, 10% holdout. Assignment is stable across placements and page loads for the session lifetime.
+- [ ] Holdout sessions see the widget in a **placebo state**: the hook and form render identically, but the recommendation slot is either hidden or filled with a merchant-configured static fallback (never WiseGift-generated recs). Placebo is invisible to the shopper.
+- [ ] Every widget interaction fires a typed event to the WiseGift event API: `widget_shown`, `widget_engaged`, `intent_submitted`, `product_clicked`, tagged with `tenant_id`, `session_id`, `placement`, `intent_mode`, `is_holdout`, timestamp.
+- [ ] The `orders/create` Shopify webhook is received by the WiseGift backend for every merchant order. WiseGift extracts only `order_id`, `line_items[].shopify_product_id`, `line_items[].quantity`, `total_price`, `currency`, and correlates to a session via a client-side widget-planted marker (a `wg_session=<id>` query param appended to product URLs on click, or Shopify cart attribute if available). Customer PII fields are dropped at ingest and never persisted.
+- [ ] Attribution report joins events + orders on `session_id` within a **7-day attribution window** from the last `product_clicked` event.
+- [ ] Merchant dashboard renders KPIs against the holdout (see Analytics dashboard feature).
 
 ---
 
-## Feature: Agenda — Calendar View
+## Feature: Widget — Fallbacks and offline behaviour
 
 ### User Story
-As a logged-in user, I want to see all my upcoming occasions on a calendar so that I can plan gift purchases in advance.
+As a widget shopper, I should never see a broken widget so that my confidence in the merchant is not undermined.
 
 ### Acceptance Criteria
-- [ ] The Agenda tab renders a calendar view that streams the user's upcoming occasions from Firestore in real time.
-- [ ] Occasions are visually marked on their respective calendar dates.
-- [ ] The Agenda tab is only available to logged-in users.
+- [ ] If the `widget.js` script fails to load, the Theme App Extension block renders nothing (empty container). The merchant's page layout is unaffected.
+- [ ] If the recommendation API times out (> 2 seconds), the widget serves precomputed cold recs from local widget cache (populated on previous session) or hides the recommendation slot.
+- [ ] If the tenant's kill switch is triggered (see Cost guardrails), the widget renders precomputed cold recs only, with no live LLM calls. Shoppers cannot tell.
 
 ---
 
-## Feature: Agenda — Create Occasion
+## Feature: Merchant admin — Widget configuration
 
 ### User Story
-As a logged-in user, I want to create a custom occasion with a name, type, date, and optional wish-list hints so that I can track any gift-giving event that matters to me.
+As a merchant admin, I want to control what the widget says and where it appears so that it matches my brand.
 
 ### Acceptance Criteria
-- [ ] The "Add Occasion" FAB on the Agenda tab opens a creation form.
-- [ ] The form has a required "Occasion Name" text field and a required date picker (future dates only, up to 2 years ahead).
-- [ ] Quick-select chips for the most common occasion types (Birthday, Christmas, Wedding, Anniversary, Baby Shower) pre-fill the name field if it is empty when a chip is tapped.
-- [ ] The user can add free-text wish-list hint items (e.g., "Coffee Maker") as chips. Individual hints can be removed.
-- [ ] Tapping "Create Occasion" with a valid name and date saves the occasion to Firestore and returns to the Agenda, showing a success snackbar.
-- [ ] Attempting to save without a name or date shows a snackbar error; the form stays open.
+- [ ] Configuration lives in the WiseGift admin dashboard under Widget → Configuration.
+- [ ] The merchant can edit the **hook prompt copy** (up to 200 characters, or pick from 5 language-localised presets).
+- [ ] The merchant can toggle the **intent form fields**: relationship, occasion, budget, interests are individually toggleable (required-vs-optional-vs-hidden), with defaults matching the MVP form.
+- [ ] The merchant can set the **number of recommendations** shown per widget instance (3–10, default 5).
+- [ ] The merchant can pick brand accent colour and border radius; other styling matches the storefront theme via inherited CSS variables.
+- [ ] Save persists to the tenant's widget config; changes propagate to live widgets within 5 minutes (config is fetched with the widget bundle and cached).
+- [ ] All fields are inline-validated.
 
 ---
 
-## Feature: Agenda — Occasion Detail
+## Feature: Merchant admin — Placements
 
 ### User Story
-As a logged-in user, I want to view the details of a saved occasion so that I can see curated gift recommendations associated with it and check who is attending.
+As a merchant admin, I want to see which placements are live and manage them so that I can experiment with where the widget appears.
 
 ### Acceptance Criteria
-- [ ] Tapping an occasion from the Agenda or the Home upcoming banner opens the Occasion Detail screen.
-- [ ] The detail screen header shows the occasion name and date.
-- [ ] If AI-curated gift recommendations have been generated for the occasion, they appear in a horizontal scrollable "The Selection" list, each shown as a product card.
-- [ ] If no recommendations exist yet, a "Get Curated Recommendations" button is shown. Tapping it triggers the backend RAG pipeline and populates the recommendation list on success.
-- [ ] While recommendations are generating, a full-screen loading state is shown.
-- [ ] For birthday occasions, a "Muse Profile" section shows the recipient's name and interests.
-- [ ] If the occasion has a linked recipient (a WiseGift user), their name is tappable and navigates to their public profile.
-- [ ] For non-birthday occasions, a "Guest List" section lists invited guests by username. Tapping a guest navigates to their public profile.
-- [ ] On error during recommendation generation, a snackbar describes the failure.
+- [ ] The admin dashboard's Placements screen lists each configured placement (Home hero / PDP slot / Gift-finder page) with status (enabled / disabled), the theme location, and links to the Shopify theme editor for that block.
+- [ ] The merchant can enable or disable a placement; disabled placements do not render the widget on the storefront.
+- [ ] Each placement carries an independent set of KPIs on the analytics dashboard.
+- [ ] Adding a new placement follows the same "Configure in Shopify" deep-link flow used in onboarding.
 
 ---
 
-## Feature: Birthday Agenda — Contact Import and Management
+## Feature: Merchant admin — Analytics dashboard (minimal MVP)
 
 ### User Story
-As a logged-in user, I want to manage a list of contacts with their birthdays so that I get timely reminders and gift ideas for the people I care about.
+As a merchant admin, I want to see the widget's impact on my store in one screen so that I know whether it's worth keeping.
 
 ### Acceptance Criteria
-- [ ] From the Profile tab, a "Birthday Import" menu item opens the Birthday Agenda screen.
-- [ ] The Birthday Agenda screen shows a list of all saved birthdays (name and date).
-- [ ] A "Sync Phone Contacts" action requests contacts permission and presents a contact selector for picking which phone contacts to import, including their birthday dates.
-- [ ] For contacts without a birthday already stored, the user can tap the entry to open a date picker and assign a birthday manually.
-- [ ] Existing birthdays can be updated by tapping the entry and picking a new date.
-- [ ] Each birthday entry has a delete icon; tapping it removes that entry from the agenda after confirmation.
-- [ ] The birthday list updates in real time via a Firestore stream.
+- [ ] Default date range: last 30 days. Configurable ranges: 7d, 14d, 30d, 90d.
+- [ ] KPI tiles, each shown as `exposed vs holdout` with lift percentage and a significance flag (green if p < 0.05, grey if not enough data yet):
+  - **Widget CTR** (widget_engaged / widget_shown)
+  - **Add-to-cart rate on recommended products** — sessions where a product-clicked event was followed by a Shopify `carts/update` including that product within 15 minutes.
+  - **Conversion rate** on sessions that saw the widget (order within 7-day attribution window / widget_shown sessions).
+  - **AOV** for orders from widget-exposed sessions vs holdout.
+  - **Revenue per session** (attributed order revenue / widget_shown sessions).
+- [ ] A small line chart per KPI shows daily trend over the selected range.
+- [ ] A minimum-data callout displays if any KPI has fewer than 5,000 exposed sessions in the selected range ("Not enough data yet — need N more exposed sessions").
+- [ ] Data is refreshed hourly; a timestamp shows last refresh.
+- [ ] All numbers are export-to-CSV.
+- [ ] No cohort analysis, funnel drill-down, or per-recommendation breakdown at MVP — those are post-MVP.
 
 ---
 
-## Feature: My Account — Profile Overview
+## Feature: Merchant admin — Account & billing
 
 ### User Story
-As a logged-in user, I want a profile screen that summarises my identity, collections, and settings so that I can navigate to any personal area of the app from one place.
+As a merchant admin, I want to see my plan and usage so that I know when I'm approaching my limits.
 
 ### Acceptance Criteria
-- [ ] The Profile tab shows a collapsible header with the user's display name (first + last name, or username as fallback) and their @username.
-- [ ] An edit icon in the app bar opens the Edit Profile screen.
-- [ ] An "About Me" section shows birthday, country, gender, and interests read from Firestore in real time.
-- [ ] A "My Gift Collections" section shows a preview of up to two of the user's named collections (with a mosaic thumbnail and gift count). A "See all" link opens the full My Collections screen. A "New collection" button opens the create-collection dialog.
-- [ ] A "Saved Collections" section appears when the user has saved at least one editorial collection. Each saved card shows an image, title, and an unsave button.
-- [ ] An "Agenda" section contains a "Birthday Import" menu item.
-- [ ] A "Settings" section contains a "Preferences" menu item.
-- [ ] "Log out" and "Delete Account" actions are presented at the bottom; each requires explicit confirmation in a dialog before executing.
-- [ ] Logging out clears the session and returns the user to the root (unauthenticated) state.
-- [ ] Deleting the account removes the Firebase Auth account; the user is returned to the root state.
+- [ ] The Account screen shows: plan name (Pilot / Starter / Growth / Scale), monthly recommendation budget included in the plan, current-month recommendations served, days until reset.
+- [ ] A visual progress bar shows current usage vs. plan cap. Colour changes to warning at 80% and to error at 100%.
+- [ ] Billing is handled via Shopify's built-in App Store billing API for public-app installs (recurring subscription with usage-based overage). Pilot tenants show "Pilot — free through YYYY-MM-DD" with no billing hooks.
+- [ ] If the merchant hits their monthly cap, the widget serves precomputed cold recs only (no live LLM) and the admin dashboard shows a persistent banner with an upgrade CTA.
+- [ ] Merchant can cancel or downgrade from within Shopify (App Store billing is authoritative).
 
 ---
 
-## Feature: My Account — Edit Profile
+## Feature: Recommendation API — `POST /v1/recommendations`
 
 ### User Story
-As a logged-in user, I want to edit my profile details so that my information stays accurate and my recommendations improve over time.
+As the widget, I want to fetch personalised recommendations for the current shopper's intent so that I can display relevant products.
 
 ### Acceptance Criteria
-- [ ] The Edit Profile screen loads the current username, birthday, country, interests, and profile photo from Firestore.
-- [ ] The user can change their username (required field).
-- [ ] The user can update their date of birth and residence country.
-- [ ] The user can add new interest tags or remove existing ones using a chip-based editor.
-- [ ] The user can pick a new profile photo from the device gallery. The selected image is previewed immediately.
-- [ ] Saving uploads the new photo to Firebase Storage (if changed), then writes all field updates to Firestore.
-- [ ] On success, a snackbar confirms the update and the screen closes.
-- [ ] On error, a snackbar describes the failure and the form remains open.
+- [ ] Endpoint: `POST /v1/recommendations`. Auth: tenant public key + short-lived signed request token issued to the widget bundle (rotates hourly).
+- [ ] Request body: `session_id`, `placement`, `intent_mode`, `intent` (relationship, occasion, budget_min, budget_max, interests[]), `context` (current `shopify_product_id` if on a PDP), `limit` (default 5).
+- [ ] Response body: `recommendations[]` (each: `shopify_product_id`, `handle`, `title`, `price`, `image_url`, `rank_score`), `cache_hit` (boolean), `served_from` (`live_llm` | `cache` | `precomputed` | `fallback`).
+- [ ] The endpoint enforces the **per-tenant hard usage cap** — over-cap requests are served from precomputed cold recs, cache hit is set to true, `served_from = precomputed`.
+- [ ] The endpoint enforces the **per-session rate limit** (max 20 live-LLM calls per session per hour); over-limit requests are served from cache/precomputed.
+- [ ] p95 latency budget: **300 ms** end-to-end.
+- [ ] Every response emits cost telemetry (tenant, placement, model, tokens in/out, cache hit/miss, latency) to the ops metrics stream.
+- [ ] Errors return a fallback payload with `served_from = fallback` and 200 OK — the widget must never render an error state to the shopper.
 
 ---
 
-## Feature: Gift Collections — My Collections
+## Feature: Event API — `POST /v1/events`
 
 ### User Story
-As a logged-in user, I want to organise my saved wishlist products into named collections so that I can share curated lists for specific occasions or themes.
+As the widget, I want to record shopper interactions so that attribution and analytics are accurate.
 
 ### Acceptance Criteria
-- [ ] The My Collections screen lists all named gift collections, each showing a mosaic thumbnail (up to 4 product images) and the gift count.
-- [ ] Tapping a collection opens the Wish List screen filtered to that collection's products.
-- [ ] A "New Collection" button opens a dialog where the user types a name; confirming creates the collection in Firestore and opens it immediately.
-- [ ] Each collection card shows a link icon that, when tapped, copies the collection's public URL (format: `https://wisegift.web.app/u/<username>/<slug>`) to the clipboard and shows a confirmation snackbar.
+- [ ] Endpoint: `POST /v1/events`. Same auth as the recommendation API.
+- [ ] Accepts a batch of events (`events[]`), each: `event_type` (`widget_shown` | `widget_engaged` | `intent_submitted` | `product_clicked`), `session_id`, `placement`, `intent_mode`, `is_holdout`, `timestamp`, optional `shopify_product_id`, optional `rank_score` and `served_from` (echoed from the rec response).
+- [ ] Events are validated against a strict schema; unknown fields are rejected (fail fast on client bugs).
+- [ ] Events are enqueued and processed asynchronously into the analytics store. p95 write latency < 100 ms.
+- [ ] The endpoint is fire-and-forget from the widget's perspective — no retry storms if a request fails.
+- [ ] Batching: widget can send up to 10 events per request; widget batches events with a 1-second flush interval.
 
 ---
 
-## Feature: Gift Collections — Wish List (Personal Storefront)
+## Feature: Webhook receiver — Shopify order attribution
 
 ### User Story
-As a logged-in user, I want to manage the products in my wish list and collections so that I can keep my storefront curated and control what is publicly visible.
+As the WiseGift backend, I want to record order events to attribute revenue lift so that merchant dashboards show accurate KPIs.
 
 ### Acceptance Criteria
-- [ ] The Wish List screen displays all saved products in a two-column editorial grid.
-- [ ] A horizontal category bar allows filtering by collection. An "All" chip shows every saved product; collection name chips show only products in that collection. An "+" icon opens the create-collection dialog.
-- [ ] Each product card shows the product image, name, and price. A "See This Gift" button opens the affiliate link in the browser.
-- [ ] Own-wishlist view: a lock toggle on each card switches a product between public and private. Private products are hidden when the wishlist is viewed by others.
-- [ ] Own-wishlist view: a folder icon on each card lets the user move the product to a different collection via a bottom-sheet picker.
-- [ ] A publishing banner shows the user's public collection URL with a "Copy Link" button.
-- [ ] A share icon (top bar) opens the system share sheet with the public URL.
-- [ ] An optional banner image is shown in the header. The owner can tap a camera icon to replace it from the device gallery; the image is uploaded to Firebase Storage.
-- [ ] Products saved from the Discover / Search tab, or from another user's public storefront, are added to the General (default) collection unless a category was specified.
+- [ ] HMAC signature verification against Shopify's shared secret; invalid signatures rejected with 401.
+- [ ] Idempotency: repeated webhooks for the same `order_id` are deduplicated.
+- [ ] From the order payload we retain only: `order_id`, `line_items[].shopify_product_id`, `line_items[].quantity`, `line_items[].price`, `total_price`, `currency`, `created_at`, `tenant_id` (derived from shop domain).
+- [ ] All customer PII fields (`customer`, `billing_address`, `shipping_address`, `email`, `phone`, `client_details`) are dropped at ingest and never persisted, logged, or forwarded.
+- [ ] Correlation to a widget session is done via a `wg_session` cart attribute or query-string marker planted by the widget on product-click; unattributed orders are still stored (to compute merchant-wide baselines) but do not contribute to per-session lift.
+- [ ] Webhook processing p95 < 500 ms.
 
 ---
 
-## Feature: Public Storefront (Unauthenticated Browsing)
+## Feature: Multi-tenancy — Isolation model
 
 ### User Story
-As any user (authenticated or not), I want to browse another person's public gift collections at a shareable URL so that I can discover what they want and possibly add items to my own list.
+As the platform operator, I want strict tenant isolation so that no cross-tenant data leak is possible even in the presence of a bug in application code.
 
 ### Acceptance Criteria
-- [ ] The URL `https://wisegift.web.app/u/<username>` displays a public overview page of all of that user's non-private collections, showing a mosaic tile for each collection with name and gift count.
-- [ ] Tapping a collection tile navigates to `https://wisegift.web.app/u/<username>/<slug>`, which shows the products in that collection in the same two-column editorial grid.
-- [ ] The header on both pages displays the user's username and their optional banner image.
-- [ ] Each product card has a "Want This" heart button. Authenticated users who tap it have the product added to their own wish list; unauthenticated users see a snackbar prompting them to join.
-- [ ] Private products (where `isPrivate = true`) are never shown on the public storefront.
-- [ ] A footer section on both pages contains a "Join WiseGift" call-to-action.
-- [ ] If the username does not exist, the page shows "Collection Not Found".
+- [ ] Every table containing tenant data carries a `tenant_id UUID NOT NULL` column; a composite index `(tenant_id, primary_key)` is present.
+- [ ] Every repository method takes a `tenant_id` argument or reads it from a request-scoped context; a lint rule flags any raw SQL that does not include `WHERE tenant_id = ?`.
+- [ ] Integration tests seed two tenants, run queries as tenant A, and assert zero rows from tenant B are returned. Rerun in CI on every PR.
+- [ ] Every recommendation call and event write is tenant-scoped from the API layer down through embeddings retrieval to the analytics store.
+- [ ] Uninstall soft-deletes for 30 days, then a scheduled job hard-purges all tenant-scoped rows (products, embeddings, events, orders, config).
 
 ---
 
-## Feature: User Profile (Viewing Others)
+## Feature: Cost guardrails (engineering requirements)
 
 ### User Story
-As a logged-in user, I want to view another user's public profile so that I can see their interests and access their gift storefront.
+As the founder, I want the AI cost of running the product to be bounded regardless of merchant traffic so that a pilot can never generate a bill I cannot pay.
 
 ### Acceptance Criteria
-- [ ] Visiting another user's profile shows their @username, birthday, country, gender, and interests.
-- [ ] A "Storefront" tile links to that user's public wish list screen (in-app, showing only their public items).
-- [ ] Logged-in users who view another user's profile can access a moderation menu (three-dot icon) with two options:
-  - **Report**: opens a text field dialog; on confirmation, submits a report to the backend and shows a "User reported" snackbar.
-  - **Block**: shows a confirmation dialog; on confirmation, blocks the user and navigates back.
-- [ ] The moderation menu is not shown when viewing one's own profile.
+- [ ] **Per-tenant hard usage cap** — configurable, default 50k live-LLM recommendation calls per calendar month during pilot. Over-cap requests are served from precomputed cold recs. Enforced at the recommendation API layer with a Redis-backed counter.
+- [ ] **Response cache** — 24-hour TTL on live recommendations, keyed by `(tenant_id, intent_signature, context_signature)`. Expected hit rate > 60% at steady state.
+- [ ] **Nightly precomputed cold recs** — a per-tenant nightly job produces top-N recommendations per SKU without LLM calls (vector retrieval + heuristic ranking only). These serve as PDP-context recommendations when the shopper provides no intent signal, and as the fallback when the live path is unavailable or over-cap.
+- [ ] **Model selection** — Claude Haiku 4.5 is the default for re-ranking and intent parsing. Escalation to Sonnet is behind a per-tenant feature flag and used only for full-form gift-intent flows with a rich intent object.
+- [ ] **Session-level rate limit** — max 20 live-LLM calls per widget session per hour.
+- [ ] **Per-tenant kill switch** — daily-spend threshold triggers an ops alert and flips the tenant to precomputed-only mode until manually reset. Configurable per plan tier.
+- [ ] **Cost telemetry** — every rec call is tagged with `tenant_id`, `placement`, `model`, `input_tokens`, `output_tokens`, `cache_hit`, `served_from`, `latency_ms`. Dashboard shows cost per merchant per day.
 
 ---
 
-## Feature: Notifications
+## Data & privacy
 
-### User Story
-As a logged-in user, I want an in-app notification centre so that I know when I am invited to an event.
+### What we store
+- **Per tenant:** identity (shop domain, Shopify shop ID, region, plan), catalog snapshot with embeddings, widget config, placement config, feature flags.
+- **Per session:** anonymous session ID, exposed/holdout assignment, events (widget_shown, widget_engaged, intent_submitted, product_clicked), intent submissions (recipient relationship, occasion, budget, interests — no free-text PII).
+- **Per order:** filtered order payload — `order_id`, line items (product IDs, quantities, prices), total, currency, timestamp, tenant. No customer identifiers.
 
-### Acceptance Criteria
-- [ ] The notification bell in the app bar shows a real-time unread count badge when there are unread notifications.
-- [ ] The Notifications screen lists all notifications in reverse-chronological order. Each item shows a type-specific icon, title, body text, and formatted timestamp.
-- [ ] Notification types currently supported: **eventInvite** (orange icon). All other types show a generic icon.
-- [ ] Unread notifications are visually distinguished from read ones (border colour and background tint).
-- [ ] Tapping any notification marks it as read.
-- [ ] Tapping an **eventInvite** notification also navigates to the relevant Occasion Detail screen.
-- [ ] If the user has no notifications, an empty-state illustration and message are shown.
+### What we never store
+- Merchant customer names, emails, phone numbers, addresses, IPs.
+- Full order payloads with PII (filtered at ingest, before persistence).
+- Cross-merchant browsing behaviour or profiles.
+- Anything gathered from a source other than the widget interaction, the merchant's Shopify APIs (catalog + orders), or the merchant admin's own inputs.
 
----
+### Region
+All storage and compute in **EU regions** at MVP (Neon EU, application hosting in EU). US region considered only when a US pilot is signed.
 
-## Feature: Preferences
-
-### User Story
-As a logged-in user, I want to configure my app language, birthday reminder lead time, and per-relationship spending limits so that WiseGift behaves according to my personal habits.
-
-### Acceptance Criteria
-- [ ] The Preferences screen is accessible from the "Settings" section on the Profile tab.
-- [ ] **Language selector**: currently supports English and Spanish. Changing the language immediately applies the locale throughout the app without requiring a restart.
-- [ ] **Reminder lead time**: a slider from 1 to 30 days controls how many days before an occasion the user wants to be reminded. The current value is shown next to the slider.
-- [ ] **Per-relationship budget limits**: separate sliders for Partner, Close Family, Close Friend, and Other, each ranging from €10 to €500.
-- [ ] Tapping "Save Preferences" or the checkmark in the app bar persists the settings to Firestore and closes the screen with a success snackbar.
-- [ ] On error, a snackbar describes the failure and the screen remains open.
+### Data-processing role
+WiseGift is a **data processor** for the merchant's shopper data (anonymous session events + filtered order records). A **DPA is required** for every merchant, including pilots. Template owned by `privacy-legal-advisor`.
 
 ---
 
-## Open Questions
+## Roadmap — post-MVP (in likely priority order)
 
-None.
+1. **Verticalised intent parameter packs** — per-vertical intent forms (Fashion / Tech / Books / Beauty / Home) with merchant-editable style archetypes and reference imagery. Justifies the Growth-tier price step. See `docs/decisions.md` 2026-09-29 entry.
+2. **Purchase-outcome learning loop** — the event schema is MVP-ready; the learner (contextual bandit / preference model) lands here to compound per-tenant lift over time.
+3. **Analytics — deeper cuts** — per-placement funnel, per-intent-mode conversion, cohort analysis, exportable reports.
+4. **VTEX and SFCC integrations** — same core APIs, new adapter modules for catalog sync and order webhooks.
+5. **Custom / headless integration** — publish a REST integration guide and a signed-request SDK for merchants on non-supported platforms.
+6. **Admin — A/B experiments UI** — let merchants A/B test alternate hook copy, form field sets, and rec-slot sizes with attribution baked in.
+7. **Behavioural signals (opt-in)** — if a merchant opts in and has consent-banner infrastructure, ingest cross-page browsing signals for stronger cold-start recs. Not before a legal review.
+8. **B2C storefront revival (parked Flutter app)** — resurrect the Flutter consumer app to browse participating merchants' catalogs on a WiseGift-branded surface. Requires per-merchant commercial deal. Not before at least 20 paying merchants.
 
 ---
 
-## Resolved Questions
+## Out of MVP scope (explicit)
 
-- **Occasion wishlist hints vs. product catalog** *(closed 2026-07-01)*: `WishlistItem` always references a real catalog `productId`. The `hint` field is used only for AI-generated item descriptions. The `AddGiftWishSheet` surfaces two tabs — CATALOG search and MY COLLECTIONS — so users always select real products. Free-text chips described in an earlier spec draft were never implemented.
+- iOS / Android native mobile apps for merchants.
+- Multi-store roll-ups for merchants running several Shopify stores under one brand.
+- Free forever tier or self-serve trial without a pilot conversation.
+- Rev-share pricing model.
+- SSO / SAML for merchant admin login (email + password + Google OAuth are enough at MVP).
+- Multi-user seats per merchant tenant (single-user admin at MVP).
+- Public API for merchants to hit recommendation endpoints from server-side code (widget-only at MVP).
+- Any behavioural tracking beyond widget interactions and the single order-confirmation webhook.
 
-- **Guest save button on product cards** *(closed 2026-07-01)*: The save/wishlist button is **visible and tappable for guests**. Tapping stores a pending save via `PendingSaveService` and shows a `RegistrationGateSheet` prompting sign-up. No no-op behaviour.
+---
 
-- **Occasion types vs. quick-select chips** *(closed 2026-07-01)*: All 8 `OccasionType` values (`birthday`, `christmas`, `wedding`, `anniversary`, `babyShower`, `graduation`, `housewarming`, `other`) are already rendered as chips on the Create Occasion screen via `_occasionIcons`. The spec's reference to "only 5" was out of date.
+## Open questions
 
-- **Language support scope** *(closed 2026-07-01)*: `app_en.arb` and `app_es.arb` have identical coverage (469 lines each). Spanish localisation is complete for all currently implemented strings.
+- **Language coverage** — MVP ships widget copy in EN, ES, PT. Do we also need DE / FR / IT before the first pilot with a non-Iberian merchant? Route: `functional-analyst` + `marketing-manager`.
+- **Widget consent for EU** — some legal regimes require explicit consent for setting a first-party session identifier even without cross-site tracking. Do we need a consent-mode integration with the merchant's cookie banner from day one? Route: `privacy-legal-advisor`.
+- **App Store category** — do we list under Marketing → Upselling & Cross-selling, or Store Design → Product Discovery? Positioning matters for organic discovery. Route: `marketing-manager` + `platform-integrations-expert` (proposed agent).
+- **Custom-app pilot billing** — during the pilot, merchants install as custom apps (bypassing App Store review). Shopify's App Store billing is not available to custom apps. Do we bill pilot-converted merchants through Stripe until they migrate to the App Store version, or migrate them to the public app at conversion? Route: `devops-expert` + `platform-integrations-expert`.
+- **Merchant-side data-clean-room requests** — if a merchant asks for their tenant's raw event data as an export, what SLA and format? Route: `functional-analyst`.
 
-- **Notification delivery mechanism** *(closed 2026-07-02)*: Background push (FCM/APNs) is implemented. Flutter registers the device FCM token to `users/{uid}.fcmTokens` on sign-in. The Spring `user` service runs a `@Scheduled` job daily at 09:00 UTC that reads upcoming occasions per user, respects `reminderLeadTimeDays` (default 7), and sends both an FCM push and an in-app Firestore notification. Web push (VAPID) is explicitly out of scope. **Pending manual step:** APNs key must be uploaded in Firebase Console → Project Settings → Cloud Messaging before iOS push delivery works.
+---
+
+## Resolved questions
+
+*(To be populated as MVP scope questions are closed. The seven pivot-era scope decisions are captured in `docs/decisions.md` entry dated 2026-09-29 "Frozen MVP scope".)*
