@@ -327,6 +327,26 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-30 — Backend PR 1 merged (closure notes on the foundation)
+- Context: The plan logged 2026-09-29 as "Backend PR 1 plan" was executed by `backend-engineer` on branch `feature/b2b-foundation` and merged today. Closure notes are worth capturing so the next session (PR 2 Shopify OAuth) starts from a clean slate.
+- **Branching-model note (worth flagging retroactively, as the 2026-07-10 entry did):** PR 1 was merged **directly into `main`** (PR #25 in `wisegift-backend`), skipping the `develop`-first rule in `docs/engineering/release-process.md`. Second time this has happened in the project (first was commits `42145d6` / `123d8bc` on 2026-07-02, called out in the 2026-07-10 entry). Consistent with early-days mode; no live pilots yet so nothing broke. **`develop` fast-forwarded to match `main` today** (`git merge origin/main --ff-only` on `develop` → push), so subsequent PRs can base off `develop` as the release process describes. The rule stands going forward — as soon as a first pilot merchant is live, direct-to-main becomes a real risk (bypasses staging validation). Worth remembering at the next PR.
+- Outcome vs plan:
+  - **Executed as specified.** Aggressive restructure (deleted `catalog/`, `gift-recommendation/`, `user/`, `infra/`, `postman/`, all Firebase infrastructure), single Spring Modulith deployable in `app/`, module layout is `shared` + `tenant` + `app`. `tenant` module is thin hexagonal (Tenant + TenantId + Plan + repository port + JPA adapter + provisioning service). `spring.jpa.hibernate.ddl-auto: validate` on all profiles. `docker-compose.yml` at root with `pgvector/pgvector:pg16` + `redis:7-alpine`. Backend `CLAUDE.md` rewritten. Final diff: **164 files, +916 / −10 459**.
+  - **My plan-brief typo caught and corrected.** I wrote "14 tables" twice; `architecture.md` §8 has 13. Agent shipped 13 and flagged it. No downstream impact; noted so I don't repeat.
+  - **Plan enum case aligned to Java uppercase.** Agent used `PILOT / STARTER / GROWTH / SCALE / ENTERPRISE` per `@Enumerated(EnumType.STRING)` convention; `architecture.md` §8 prose said lowercase. Updated §8 today to match the code. No schema drift (no `CHECK` constraint) but keeping the doc and the source of truth aligned matters.
+  - **CI workflow bump.** Follow-on commit on the same branch upgraded `actions/checkout@v4` → `v5` and `actions/setup-java@v4` → `v5` to clear the Node 20 deprecation warnings from GitHub Actions.
+- Judgment calls the agent made (all reasonable, worth noting for later PRs):
+  - `precomputed_recs` PK: composite `(tenant_id, source_platform_product_id, rank)` — architecture.md §8 didn't specify. Natural key, no surrogate needed.
+  - `tenant_product_variants` gained an unspecified index `(tenant_id, tenant_product_id)` for the tenant-leading query pattern.
+  - `shared/` shipped as empty JAR module (Firebase-only historically; pom kept for future common code).
+  - `recs_per_widget` default `5`, `placements_enabled` default `'{}'::text[]`.
+- Tests: `TenantProvisioningServiceTest` unit — green locally. `FlywayMigrationTest` + `TenantRepositoryAdapterIT` (Testcontainers) — CI-only; the agent's local Docker Desktop had an API-version incompatibility with Testcontainers. CI on GitHub Actions runs them normally.
+- Outstanding follow-ups:
+  - **`devops-expert`** — Neon EU staging project provisioning + `CREATE EXTENSION vector` before `develop` triggers a staging Flyway run. If auto-deploy to staging is wired up, this may already be needed retroactively; if not wired up, needs to land before PR 2 wants to hit staging.
+  - **`postman/`** collection was deleted (targeted removed B2C endpoints). New collection lands alongside PR 2's first HTTP endpoint.
+- Next PR: **PR 2 — Shopify OAuth install flow.** New `platform-integrations` module, first real HTTP endpoint, writes `tenants` + `platform_credentials` (including `custom_domain` from `GET /shop.json`) on OAuth callback. Reads from the DB tenant module already merged.
+- Made by: Product Owner (advised by claude, executed by backend-engineer)
+
 ## 2026-09-29 — Backend PR 1 plan: multi-tenant foundation (aggressive restructure + single Spring Modulith deployable)
 - Context: With the widget scaffold merged and the pipeline validated end-to-end (see 2026-09-29 "Widget theming auto-inherit is placement-dependent" for the live-test outcome below), attention moves back to backend where everything else is blocked. Current `wisegift-backend` state: Maven multi-module (`shared`, `catalog`, `gift-recommendation`, `user`), three separate Spring Boot apps on ports 8080 / 8081 / 8082, 11 Flyway migrations under `catalog/` describing the pre-pivot affiliate schema. All of this is B2C-shape and unused in production. First B2B PR needs to establish the multi-tenant floor everything else builds on. PO also asked whether full DDD is appropriate module-by-module; agreed answer per the earlier design chat: **calibrate DDD depth to actual domain complexity per module** — thin shells where behaviour is thin (catalog, tenant), rich shells where domain earns the ceremony (recommendation, tenant lifecycle when it grows).
 - Decisions:

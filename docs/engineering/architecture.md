@@ -252,7 +252,7 @@ Platform-agnostic. The identifiers a merchant carries on their source platform (
 | tenant_id | UUID | PK |
 | region | VARCHAR(2) | ISO region (`EU`); reserved for future US expansion |
 | vertical | VARCHAR(32) | e.g. `fashion`, `beauty`, `home`, `tech`, `books`, `food`, `kids`, `jewelry`, `other` |
-| plan | VARCHAR(32) | `pilot`, `starter`, `growth`, `scale`, `enterprise` |
+| plan | VARCHAR(32) | `PILOT`, `STARTER`, `GROWTH`, `SCALE`, `ENTERPRISE` (Java enum names, `@Enumerated(EnumType.STRING)`) |
 | monthly_usage_cap | INTEGER | Live-LLM recommendation calls / month; default 50000 |
 | daily_spend_cap | NUMERIC(10,2) | Nullable. NULL = fall through to per-plan constant. Set explicitly only for pilots with custom headroom or outlier tenants. See `decisions.md` 2026-09-29 "Resolved 6 open questions" |
 | feature_flags | JSONB | Per-tenant boolean flags (e.g. `{"sonnet_escalation": true}`). Starts as `{}`. See `decisions.md` 2026-09-29 |
