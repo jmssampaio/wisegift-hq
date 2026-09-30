@@ -111,13 +111,30 @@ Runs inside the merchant's storefront (Shopify theme). One tag on the page: `<wi
 Standalone web app (React/Next.js). Merchants install the Shopify app, land here for onboarding, widget configuration, placement management, and the analytics dashboard. Single-user per tenant at MVP. Same-origin API access with session auth.
 
 ### Backend — Spring Modulith
-Single deployable unit (initially — split into services only when scale demands it). Composed of the modules below, each hexagonal (`domain/`, `application/`, `infrastructure/`). Never imports across modules except via ports.
+Single deployable unit (`app/`) — split into services only when scale demands it. Composed of the modules below, each hexagonal (`domain/`, `application/`, `infrastructure/`). Never imports across modules except via published ports. See `decisions.md` 2026-09-30 "Backend Spring Modulith module structure" for design rationale and rejected alternatives.
 
-- **Tenant module** — merchant admin identity, tenant lifecycle (create at Shopify install, soft-delete 30 days on uninstall, hard purge), widget config, placement config, per-tenant feature flags. Owns the `tenants` table.
-- **Catalog module** — per-tenant catalog ingestion via Shopify Admin API + product-update webhooks, embeddings computed at ingest, nightly reconciliation, precomputed cold recs job. Owns `tenant_products`, `precomputed_recs`.
-- **Recommendation module** — the live serving path. Retrieves top-K candidates via pgvector, re-ranks via Claude (Haiku 4.5 default), enforces cost guardrails (usage cap, cache, kill switch, session rate limit), emits cost telemetry. Owns `intent_form_schemas` (versioned per tenant).
-- **Events module** — widget event ingestion (widget_shown / widget_engaged / intent_submitted / product_clicked), holdout assignment persistence, attribution joins against order webhooks. Owns `events`, `sessions`, `orders_attributed`.
-- **Platform integrations module** — Shopify OAuth install flow, HMAC-verified webhook receiver (`products/*`, `inventory_levels/update`, `orders/create`, `app/uninstalled`), Theme App Extension block metadata. Post-MVP: VTEX / SFCC adapters behind the same `PlatformCatalogSource` / `PlatformOrderSource` ports. Owns `platform_credentials`.
+**Modules (in dependency order):**
+
+| Module | Owns (tables) | Publishes port | Consumes (external) | HTTP surface |
+|---|---|---|---|---|
+| `shared` | — | — | — | — (value types: `TenantId`, later `SessionId` etc.; HMAC utilities; common exceptions) |
+| `tenant` | `tenants`, `admin_users`, `widget_config`, `intent_form_schemas` | `TenantQueryPort` | — | Admin auth (login/register), widget & intent-form config CRUD |
+| `platform-integrations` | `platform_credentials`, `catalog_sync_runs` | `PlatformCatalogSource`, `PlatformOrderStream` | Shopify Admin API + webhooks | Shopify OAuth callback, HMAC webhook receivers (`products/*`, `orders/create`, `app/uninstalled`, `inventory_levels/update`) |
+| `catalog` | `tenant_products`, `tenant_product_variants`, `precomputed_recs` | `CatalogQueryPort`, `CatalogIngestPort` | OpenAI embeddings API | Admin catalog-sync controls (manual resync, sync-status panel) |
+| `recommendation` | `cost_telemetry` | — | Anthropic API, Redis | `POST /widget/v1/session` (bootstrap), `POST /widget/v1/recommendations` |
+| `events` | `sessions`, `events`, `orders_attributed` | `AnalyticsQueryPort` | — | `POST /widget/v1/events`, admin analytics endpoints |
+| `app` | — | — | — | Spring Boot entry, Spring Security config, Flyway config, widget JWT-HMAC verification filter |
+
+**Dependency direction:** `shared ← tenant ← {platform-integrations, catalog, events} ← recommendation ← app`. Acyclic; `tenant` is the load-bearing base.
+
+**Cross-cutting placement rules:**
+- **Widget → API JWT-HMAC verification:** filter in `app/`; token issuance from `recommendation`'s `/session` bootstrap; tenant lookup via `TenantQueryPort`.
+- **Admin session auth:** Spring Security config in `app/`; `AdminAuthenticationService` + `admin_users` in `tenant`.
+- **Cost telemetry:** owned by `recommendation` (writer of every sample). Extract if analytics volume grows post-MVP.
+- **Kill switch, rate limits, response cache:** Redis-backed, all owned by `recommendation`.
+- **HTTP controllers co-located with their domain module** (`infrastructure/in/web`), not centralised in `app/`.
+
+**Explicitly not modules at MVP** (per the same decision entry): no `auth` module, no `admin-api` module, no `widget-api` module, no `telemetry` module, no `analytics` module. Adding one requires a decision entry justifying it against this list.
 
 ### Data
 - **Postgres + pgvector (Neon EU)** — shared multi-tenant, every table with tenant data has `tenant_id UUID NOT NULL` with a composite index leading with `tenant_id`. Embeddings live in pgvector columns.

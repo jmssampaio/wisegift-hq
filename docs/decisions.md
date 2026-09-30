@@ -327,6 +327,25 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-09-30 — Backend Spring Modulith module structure defined (7 modules)
+- Context: Before starting PR 2 (Shopify OAuth), PO asked to define the full module structure of the Spring Modulith so boundaries are set once rather than drifting PR by PR. The PR 1 plan sketched modules implicitly through the PR sequence; this entry makes the structure explicit, answers three specific placement questions, and locks in the "not-a-module" list to prevent module creep by default.
+- Decision: **7 modules** for MVP + near-post-MVP: `shared`, `tenant`, `platform-integrations`, `catalog`, `recommendation`, `events`, `app`. Full table with owned tables, published ports, external consumers, and HTTP surface documented in `architecture.md` §3 Backend — Spring Modulith. Dependency direction: `shared ← tenant ← {platform-integrations, catalog, events} ← recommendation ← app`. Acyclic; `tenant` is the load-bearing base.
+- Three specific placement calls made:
+  1. **`TenantId` value type: `shared` module (not `tenant`).** Every future module references `tenant_id`. Keeping `TenantId` in `tenant/` forces every downstream module to depend on `tenant/` just for the value type. Moved to `shared/identity/` today (alongside future `SessionId`, `AdminUserId`, etc.). Executed on branch `feature/tenantid-to-shared` in `wisegift-backend`, commit `5e75690`, PR ready to open. Small refactor: 5 files, tests still green.
+  2. **Cost telemetry: inside `recommendation` module.** Cost telemetry writes on every rec call, tightly coupled to guardrail / kill-switch logic already in `recommendation`. Extract to its own module only if analytics query volume grows enough to justify it (post-MVP).
+  3. **Admin controllers: co-located with each domain module**, not a central `admin-api` module. Admin endpoints are just a different inbound adapter for the same domain services. Fits the `infrastructure/in/web` hexagonal pattern already established.
+- Rejected alternatives:
+  - **`auth` module.** MVP auth is simple (Spring Security + BCrypt + Google OAuth, single-user per tenant, no SSO, no MFA per architecture.md). Spring Security config in `app/`; credential storage in `tenant`.
+  - **`admin-api` module** wrapping cross-domain admin endpoints. Forces every admin controller through a facade for zero benefit at MVP scale.
+  - **`widget-api` module** grouping widget-facing endpoints. Same anti-pattern — widget hits `recommendation` and `events` directly; both modules already own the state the widget needs.
+  - **`telemetry` module** for cost tracking. Premature separation from `recommendation`, which owns the guardrail/kill-switch logic that reads the same signal.
+  - **`analytics` module** for merchant admin dashboard. Analytics reads are a query port on `events`; a separate module adds indirection without decoupling anything.
+- Consequences:
+  - **PR sequence stays as planned** in the 2026-09-29 "Backend PR 1 plan" entry — modules map cleanly to PRs 2–8 (PR 2 = platform-integrations, PR 3 = admin auth inside tenant, PR 4 = catalog, PR 5 = embeddings inside catalog, PR 6 = recommendation + events skeletons, PR 7 = live rec engine, PR 8 = order webhook + attribution).
+  - **`TenantId` refactor PR** (small, ~5 files) lands independently before PR 2 so PR 2 consumes the new package path (`com.wisegift.shared.identity.TenantId`) from the start.
+  - Any future module addition (`analytics`, `telemetry`, `learning-loop` for v2, etc.) requires a decision entry justifying it against the "no dedicated module" list — prevents module creep by default.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-09-30 — Backend PR 1 merged (closure notes on the foundation)
 - Context: The plan logged 2026-09-29 as "Backend PR 1 plan" was executed by `backend-engineer` on branch `feature/b2b-foundation` and merged today. Closure notes are worth capturing so the next session (PR 2 Shopify OAuth) starts from a clean slate.
 - **Branching-model note (worth flagging retroactively, as the 2026-07-10 entry did):** PR 1 was merged **directly into `main`** (PR #25 in `wisegift-backend`), skipping the `develop`-first rule in `docs/engineering/release-process.md`. Second time this has happened in the project (first was commits `42145d6` / `123d8bc` on 2026-07-02, called out in the 2026-07-10 entry). Consistent with early-days mode; no live pilots yet so nothing broke. **`develop` fast-forwarded to match `main` today** (`git merge origin/main --ff-only` on `develop` → push), so subsequent PRs can base off `develop` as the release process describes. The rule stands going forward — as soon as a first pilot merchant is live, direct-to-main becomes a real risk (bypasses staging validation). Worth remembering at the next PR.
