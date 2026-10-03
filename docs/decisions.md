@@ -327,6 +327,44 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-04 — Backend PR 5 plan: embeddings pipeline (OpenAI text-embedding-3-small)
+- Context: With PR 4 merged, `tenant_products` rows land on install + webhook deltas with `content_hash` populated but `embedding` nullable. PR 5 computes embeddings via OpenAI's `text-embedding-3-small` (settled in 2026-09-29 "Architecture open questions closed"), writes them to `tenant_products.embedding`, stamps `embedding_model_version` + `last_embedded_at`. First real external AI call in the stack. Unblocks retrieval in PR 6/7.
+- Decision — scope of PR 5:
+  1. **New embedding service in `catalog` module.** `EmbeddingService` subscribes to `ProductIngestedEvent` (new, published by `CatalogIngestService` on CREATED/UPDATED outcomes), buffers via `EmbeddingBatcher`, calls OpenAI's embedding endpoint, writes vectors + model version + `last_embedded_at` + `embedding_source_hash` back to `tenant_products`.
+  2. **`EmbeddingClient` port** with `OpenAiEmbeddingClient` (real) and `MockEmbeddingClient` (deterministic fake vectors, SHA-256 → normalised 1536-dim float[]) implementations. Mock selected via `wisegift.openai.mock=true` so local dev + CI never need a real API key.
+  3. **Batching**: 100 inputs per OpenAI call, flush on 5-second timeout. OpenAI accepts up to 2048 per call; 100 is a safe default (tight latency, low memory). Tunable via config.
+  4. **Async execution**: `embeddingExecutor` thread pool (core 1, max 2, queue 1000). Dedicated so embedding doesn't share the catalog-sync pool from PR 4.
+  5. **Backfill job**: `@Scheduled(cron = "0 30 2 * * *")` at 02:30 UTC (just after nightly reconciliation). Finds products where `embedding IS NULL OR embedding_source_hash <> content_hash` and queues them. Catches drop-outs (ingest succeeded, embedding failed; webhook delivered but event bus dropped it; etc.).
+  6. **Error handling**: OpenAI 429 → exponential backoff with jitter (3 retries, 1s/2s/4s ±25%). After retries, log + leave row's embedding null; backfill job re-attempts.
+  7. **Content string composition**: `title + "\n" + description + "\n" + product_type + "\n" + sorted(tags).joinWith(", ")`. Deterministic. Documented in `EmbeddingService` Javadoc so later tweaks are intentional.
+  8. **Two new env vars**: `WISEGIFT_OPENAI_API_KEY` (required in production, boot-fails if missing with mock off); `WISEGIFT_EMBEDDINGS_MOCK` (optional, defaults false; set `true` for local dev + CI).
+  9. **One V2 Flyway migration**: adds `tenant_products.embedding_source_hash VARCHAR(64) NULL` so the service can tell "is the current embedding for the current content?" without workarounds. First V2 migration in the project.
+- Five placement calls locked:
+  1. **Event-driven, not inline.** `CatalogIngestService` publishes `ProductIngestedEvent`; `EmbeddingService` subscribes. Webhook response stays sub-100ms (just the DB write); embedding happens async. Rejected inline because it would add ~100-200ms OpenAI latency per batch to every webhook response, and OpenAI 429 would start propagating 500s to Shopify.
+  2. **Batch 100 / flush 5s.** OpenAI accepts up to 2048 per call; 100 is a safe default — tight latency, low memory, well under tier-1 rate limits. Tunable.
+  3. **Mock mode via env var.** `WISEGIFT_EMBEDDINGS_MOCK=true` → `MockEmbeddingClient` returns deterministic fake vectors (SHA-256 hashed to 1536-dim normalised float[]). Zero external dep for local dev + CI. Production: `mock=false`, api-key required.
+  4. **First V2 Flyway migration** adds `embedding_source_hash`. Required to detect "current embedding matches current content" cheaply. Clean, additive, no breaking change. Breaks the V1-only streak but with good reason.
+  5. **OpenAI client lives inside `catalog` module** for MVP. If PR 6/7 recommendation needs its own embedder (intent payloads at query time), extract to `shared` then. Avoiding premature abstraction.
+- Rejected alternatives:
+  - **Inline embedding during webhook response**: blocks the webhook controller for 100-200ms per batch of products, and any OpenAI 429 propagates back to Shopify as 500 → Shopify eventually disables the webhook.
+  - **No mock mode; require real API key in all environments**: forces every dev to set up an OpenAI account before `mvn verify` runs. Mock mode is zero cost + removes the setup friction.
+  - **Infer re-embed need from `last_embedded_at > updated_at`** (instead of comparing hashes): fragile. Content can change without the entity-level timestamp updating, and timestamp comparison across clocks is brittle. Hash comparison is deterministic.
+  - **One OpenAI call per product (no batching)**: wasteful; OpenAI charges per token regardless of batching, but round-trip overhead compounds (100 single calls at ~100ms each = 10s vs 1 batched call ≈ 200ms).
+  - **Admin "re-embed all" endpoint**: not needed at MVP — backfill job + webhook deltas keep embeddings current. Add when a real pilot asks or when we switch models.
+- Consequences:
+  - **First V2 Flyway migration lands**. Precedent set: additive-only schema evolution via Vn migrations. `tenant_products.embedding_source_hash VARCHAR(64) NULL`.
+  - **First Spring event publication inside `catalog` module** (PR 4 established the inbound pattern; this is the first outbound publish). `ProductIngestedEvent` published on CREATED/UPDATED outcomes.
+  - **New Render env var required before merge**: `WISEGIFT_OPENAI_API_KEY`. Boot-fails if missing with mock off. Add to runbook follow-up.
+  - **CI stays mock mode**: `WISEGIFT_EMBEDDINGS_MOCK=true` in `ci.yml` env block (or via `.env.example` default for local). Real OpenAI calls only on staging/production deploys.
+  - **First real OpenAI cost on staging**: minimal (~$0.02 per 10k SKUs at `text-embedding-3-small`'s $0.02/1M tokens; a 100-token average product × 10k = 1M tokens = $0.02). Trivial.
+- Rough effort: 3-4 focused days. OpenAI integration is well-trodden; the hard parts are batching + backpressure + the backfill job + clean mock mode.
+- Follow-ups:
+  - `backend-engineer` executes the plan on `feature/embeddings` off `develop`.
+  - `devops-expert` appends 2 new env vars to `render-staging-env-vars.md` runbook.
+  - Post-merge: cost telemetry per embed call is deferred to PR 7 (where live recs make the cost pattern consistent across all AI calls).
+- Next PR unlocked: **PR 6 — Widget-facing API stubs** (`CatalogQueryPort` extended with `findNearest(TenantId, float[] queryVector, int k)` using pgvector `<=>`; first real vector search).
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-03 — Backend PR 4 plan: catalog module (Shopify ingest + webhooks + reconciliation)
 - Context: With PR 1 (foundation), PR 2 (Shopify OAuth), and PR 3 (admin auth) merged, backend has tenants + credentials + admin sessions but no products. PR 4 lands the `catalog` module: merchants installing via Shopify get their full product catalog ingested into `tenant_products` + `tenant_product_variants`, with per-SKU updates arriving via webhook deltas + nightly reconciliation catching drift. Admin controls for manual resync land behind the Spring Security session cookie from PR 3. **No embeddings yet** — PR 5 adds those. First PR without any new env vars or operator action post-merge.
 - Decision — scope of PR 4:
