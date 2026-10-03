@@ -327,6 +327,47 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-03 — Backend PR 4 plan: catalog module (Shopify ingest + webhooks + reconciliation)
+- Context: With PR 1 (foundation), PR 2 (Shopify OAuth), and PR 3 (admin auth) merged, backend has tenants + credentials + admin sessions but no products. PR 4 lands the `catalog` module: merchants installing via Shopify get their full product catalog ingested into `tenant_products` + `tenant_product_variants`, with per-SKU updates arriving via webhook deltas + nightly reconciliation catching drift. Admin controls for manual resync land behind the Spring Security session cookie from PR 3. **No embeddings yet** — PR 5 adds those. First PR without any new env vars or operator action post-merge.
+- Decision — scope of PR 4:
+  1. **New `catalog` module** per the 2026-09-30 module structure entry. Hexagonal shape matching PR 1 / 2 / 3. Owns `tenant_products`, `tenant_product_variants`, `catalog_sync_runs` (`precomputed_recs` stays owned-but-untouched until PR 7).
+  2. **`CatalogIngestService`** — core upsert path. Idempotent via `(tenant_id, platform_product_id)` unique + computed `content_hash` (SHA-256 of title + description + product_type + sorted tags). Returns `IngestOutcome(CREATED, UPDATED, UNCHANGED)`. `last_seen_at = now()` on every touch.
+  3. **`CatalogSyncService`** — orchestrates full-catalog syncs. Opens a `catalog_sync_runs` row, pages through Shopify via the `PlatformCatalogSource` port, calls ingest per product, closes the run with `status` + `products_seen_count` + `pages_fetched`. Deactivation policy per 2026-09-30 "Resolved 6 open questions": after each successful run, products not seen in 2 consecutive successful runs → `available = false`.
+  4. **`CatalogRefreshService`** — cheap variant: refreshes variant price + availability only, no product-row writes, no `content_hash` recompute. Powers the admin's "Refresh prices & stock" button (1/hour rate limit).
+  5. **`InitialSyncOrchestrator`** — kicked off post-install via a `TenantInstalledEvent` subscriber. `@Async` with a dedicated `catalogSyncExecutor` thread pool so a 10k-SKU initial sync doesn't block the OAuth callback.
+  6. **Webhook subscriptions during Shopify install** — `ShopifyInstallService` extended to register four product/inventory webhooks (`products/create`, `products/update`, `products/delete`, `inventory_levels/update`) in addition to the lifecycle hooks from PR 2.
+  7. **Webhook event listeners in `catalog`** — `@EventListener` methods on typed events published by `platform-integrations`'s webhook controller.
+  8. **Nightly reconciliation** — `@Scheduled(cron = "0 0 2 * * *")` at 02:00 UTC. Sequential per-tenant iteration (fine at <10 tenants; extract to worker pool when fleet grows).
+  9. **Three admin HTTP endpoints** behind the PR 3 session cookie: `GET /admin/v1/catalog/sync-status`, `POST /admin/v1/catalog/sync/full` (1 per tenant per 24h), `POST /admin/v1/catalog/sync/prices-and-stock` (1 per tenant per hour). Rate limiting via Redis.
+  10. **`PlatformCatalogSource` port** — fills in the stub from PR 2. `ShopifyPlatformCatalogSource` implementation inside `platform-integrations` wraps `ShopifyAdminApiClient` (extended with `getProducts`, `getProduct`, `getVariants`). Respects Shopify's 2 req/s leaky-bucket rate limit via a token bucket.
+  11. **`app` module** adds `@EnableScheduling` + `@EnableAsync`, a `catalogSyncExecutor` thread pool bean (core 2, max 4, queue 32), and compile dep on `catalog`.
+- Five placement calls locked:
+  1. **Webhook delivery mechanism: Spring events.** `platform-integrations`'s webhook controller publishes typed events (`ShopifyProductCreateWebhookEvent`, etc.) via `ApplicationEventPublisher`; `catalog` subscribes via `@EventListener`. Events live in platform-integrations's public package (one-way dependency: `catalog → platform-integrations`). Rejected direct method call because platform-integrations already depends on tenant and catalog depends on platform-integrations for `PlatformCatalogSource` — adding platform-integrations → catalog would create a cycle.
+  2. **Nightly reconciliation: `@Scheduled` cron, sequential per-tenant.** Not Quartz, not Spring Batch, not a queue. MVP has <10 tenants; sequential iteration completes in minutes. Documented upgrade trigger: "extract to worker pool when fleet exceeds 50 tenants OR any tenant's sync exceeds 15 min."
+  3. **Initial sync: `@Async` with dedicated thread pool.** Does not block the Shopify OAuth callback. Merchant lands on the admin signup page in ~2 seconds while a background job pulls the 10k-SKU catalog in up to 15 min. Progress visible via `/admin/v1/catalog/sync-status`.
+  4. **Rate limit backing store: Redis.** Matches PR 2 (OAuthStateStore, WebhookIdempotencyStore) and PR 3 (ConsumedInviteTokenStore). No new infrastructure.
+  5. **`content_hash` written in PR 4 but unused.** Field populated on every upsert; PR 5 reads it to decide whether to re-embed. Avoids a schema touch when embeddings land. Called out so the embedding work knows the field is reliable.
+- Rejected alternatives:
+  - **Direct `platform-integrations → catalog` call for webhook delivery.** Creates module cycle with `catalog → platform-integrations` for `PlatformCatalogSource`. Spring events decouple cleanly.
+  - **Quartz / Spring Batch for nightly reconciliation.** Over-engineered for a sequential loop over <10 tenants. Add when fleet justifies.
+  - **Synchronous initial sync inline with OAuth callback.** Would make the OAuth response hang for up to 15 min on 10k-SKU catalogs — breaks Shopify's install UX.
+  - **Writing `content_hash` only when embeddings land (PR 5).** Would require a backfill when PR 5 ships. Cheap to write now, future-proofs the embedding path.
+  - **Admin HTTP endpoints deferred until the admin frontend exists.** Blocks the frontend team when it's ready. Endpoints exist, exercised by curl/Postman until frontend consumer lands.
+  - **Full-catalog deletion on `products/delete` webhook.** Rejected — marks `available=false` instead so the row stays for audit + late-arriving order attribution. 30-day hard-purge is a later PR.
+- Consequences:
+  - **New dependency direction:** `catalog → platform-integrations` (compile scope). Combined with existing `catalog → tenant`, `platform-integrations → tenant`, `app → everything`. Still acyclic.
+  - **`WisegiftApp` gains `@EnableScheduling` + `@EnableAsync`.** Future PRs with scheduled or async work (recommendation serving, cost telemetry rollups) inherit without re-enabling.
+  - **No new env vars. No new Flyway migration. No Render runbook changes.** First PR without an operator action item post-merge — good news given the deployment backlog.
+  - **`ShopifyInstallService` extended again** (same shape of change as PR 3's invite-token addition). Covered by updated `ShopifyInstallFlowIT`.
+  - **Nightly reconciliation starts firing in CI** on any staging deploy. If a tenant's sync fails, the `catalog_sync_runs` row + Spring logs are the operator's debugging path. No alerting infrastructure yet; add when real pilots live.
+- Rough effort: 5–7 focused days. Biggest surface area so far — ingest path has many edge cases (deleted products, archived products, all-variants-OOS, missing images, HTML in descriptions, Unicode in titles). Reconciliation + rate limiting + async orchestration are each straightforward but accumulate.
+- Follow-ups unblocked:
+  - **PR 5 (embeddings)**: hooks into `CatalogIngestService`'s CREATED/UPDATED outcomes, reads `content_hash` to decide re-embed, writes to `tenant_products.embedding` + `embedding_model_version` + `last_embedded_at`.
+  - **PR 6 (widget-facing API stubs)**: `CatalogQueryPort` published this PR is consumed by the recommendation service to pull candidate products.
+  - **PR 7 (live rec engine)**: pgvector top-K on `tenant_products.embedding` (populated by PR 5) + Claude ranking.
+  - **PR 8 (order webhook + attribution)**: separate webhook endpoint, same Spring-event delivery pattern established here.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-02 — Backend PR 3 plan: admin auth (email/password + Google OAuth)
 - Context: With PR 1 (foundation) and PR 2 (Shopify OAuth + platform-integrations) merged, the backend has `tenants` and `platform_credentials` rows landing on Shopify install but no way for a merchant admin to authenticate. PR 3 lands the first Spring Security filter chain in the codebase, exposes auth endpoints the (not-yet-built) admin dashboard will consume, and closes the install → signup → authenticated-admin loop with an invite-token redirect from the Shopify OAuth callback. Four of the eight planned PRs now complete; PR 4 (catalog) depends on auth guards from this one.
 - Decision — scope of PR 3:
