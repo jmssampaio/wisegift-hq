@@ -327,6 +327,55 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-02 — Backend PR 3 plan: admin auth (email/password + Google OAuth)
+- Context: With PR 1 (foundation) and PR 2 (Shopify OAuth + platform-integrations) merged, the backend has `tenants` and `platform_credentials` rows landing on Shopify install but no way for a merchant admin to authenticate. PR 3 lands the first Spring Security filter chain in the codebase, exposes auth endpoints the (not-yet-built) admin dashboard will consume, and closes the install → signup → authenticated-admin loop with an invite-token redirect from the Shopify OAuth callback. Four of the eight planned PRs now complete; PR 4 (catalog) depends on auth guards from this one.
+- Decision — scope of PR 3:
+  1. **New domain + services inside the `tenant` module** per the 2026-09-30 module structure entry (admin identity lives in tenant). `AdminUser` JPA entity on the existing `admin_users` table (schema from PR 1's V1 migration — no new Flyway migration needed). `AdminAuthenticationService` + `InviteTokenService` + `AdminUserRepository` port + JPA adapter + `AdminAuthController` under `infrastructure/in/web`.
+  2. **Six HTTP endpoints under `/admin/v1/auth/*`**: `signup`, `signup/google`, `login`, `login/google`, `logout`, `me`. Session-cookie auth for subsequent requests. `/me` returns admin + their tenant metadata.
+  3. **`platform-integrations` module gets a tiny extension**: `ShopifyInstallService.completeInstall(...)` after provisioning the tenant calls `InviteTokenService.issueInvite(tenantId)` and redirects to `/admin/signup?token=<signed-jwt>` instead of the placeholder `/oauth/shopify/success` from PR 2. First real end-to-end chain: Shopify install → tenant row → invite token → admin signup → authenticated session. `ShopifyInstallFlowIT` from PR 2 updated to assert the new redirect URL shape.
+  4. **`app` module gains Spring Security**: `AdminSecurityConfig` wires the filter chain. Session-based auth for `/admin/v1/**`; stateless (future-proofed for widget JWT-HMAC in PR 6) for `/widget/v1/**`; stateless + HMAC-verified for `/webhooks/shopify/**`; permit on `/oauth/shopify/**` + `/actuator/health` + `/admin/v1/auth/signup**` + `/admin/v1/auth/login**` + static `/admin/signup`. CSRF enabled (cookie strategy) for admin, disabled for widget + webhooks. Adds compile deps `spring-boot-starter-security`, `spring-boot-starter-oauth2-client`, `spring-session-data-redis`.
+  5. **Password handling**: BCrypt via Spring Security's `PasswordEncoder`. No login lockout at MVP (log failed attempts for ops; add lockout later if abuse appears).
+  6. **Google OAuth integration via `spring-boot-starter-oauth2-client`**. Env vars `WISEGIFT_GOOGLE_CLIENT_ID` + `WISEGIFT_GOOGLE_CLIENT_SECRET` (new). If either is blank at startup, Google filter chain doesn't register — password auth still works. Means PR 3 ships without blocking on the operator provisioning a Google OAuth app.
+  7. **Three new env vars added** to the Render runbook follow-up: `WISEGIFT_ADMIN_INVITE_TOKEN_SECRET` (HMAC secret for invite tokens, `openssl rand -base64 32`), `WISEGIFT_GOOGLE_CLIENT_ID` (optional), `WISEGIFT_GOOGLE_CLIENT_SECRET` (optional).
+- Three specific placement calls made:
+  1. **Invite token storage: Redis** (not DB), 24-hour TTL, consumed-key tracking in Redis set to enforce single-use. Simpler than a new DB column + V2 migration; matches the `OAuthStateStore` and `WebhookIdempotencyStore` patterns PR 2 already established.
+  2. **Session store: Redis via `spring-session-data-redis`.** Admin sessions survive backend restarts; horizontally scalable from day one even though MVP runs one instance. Uses the same Redis instance already in play for OAuth state + webhook dedupe.
+  3. **Google OAuth is config-toggleable at MVP.** Backend ships with the integration code; operator provisions the Google OAuth app + env vars when they want it live. The admin dashboard will show both signup buttons; Google button is disabled client-side when the backend reports Google OAuth is off. Zero code change needed to enable later — just populate the two env vars.
+- Five additional implementation calls locked in before execution:
+  1. **Google OAuth flow pattern: ID-token-from-client.** `POST /admin/v1/auth/login/google` and `POST /admin/v1/auth/signup/google` accept a JSON body `{googleIdToken}`. Backend verifies the ID token against Google's published JWKS (via `google-auth-library-oauth2-http` or equivalent) and reads the `sub` + `email` claims. Rejected: traditional server-side 302-redirect flow (`GET /auth/google` → Google → `GET /auth/google/callback`). The ID-token-from-client pattern matches the modern SPA conventions the Next.js admin dashboard will use; the server-side flow would force session storage of OAuth state before the user is even authenticated, redundant with the invite-token mechanism.
+  2. **`/me` response shape (locked):**
+     ```json
+     {
+       "admin": {"id": "...", "email": "...", "createdAt": "..."},
+       "tenant": {
+         "id": "...", "region": "EU", "vertical": "...", "plan": "PILOT",
+         "active": true, "consentModeRequired": false
+       }
+     }
+     ```
+     Admin frontend consumes exactly this shape. Field additions in later PRs land as additive-only.
+  3. **Session timeout: 24-hour idle, 7-day absolute maximum.** Spring Session's default 30-min idle is wrong for a merchant admin dashboard the user comes back to once a day. Sliding renewal within the 7-day window, hard logout at 7 days. Configured via `server.servlet.session.timeout` + a custom `SessionIdCookieSerializer` for the absolute cap.
+  4. **Rate limiting on `/login`: deferred, not MVP.** No attack surface yet (no live merchants). Backend logs every failed auth attempt with email + source IP for ops. If abuse appears, add a Redis-backed counter (5 attempts per email per 15 min) in a small follow-up PR — easy because the Redis + session infrastructure is already in place.
+  5. **Password strength: 8-character minimum, no other rules.** NIST deprecated complexity requirements (SP 800-63B) — length alone is sufficient. Validated server-side in `AdminAuthController` signup; return 422 with a specific error code on failure. No upper bound.
+- Rejected alternatives:
+  - **Invite token in a DB column on `admin_users`.** Needs a V2 migration for `invite_token_jti`, more complex than Redis + consumed-set, and doesn't buy anything meaningful at MVP scale.
+  - **JWT-based admin sessions** (same as widget → API tokens). Rejected — admin sessions have different semantics (longer-lived, logout should actually invalidate server-side, CSRF model is cookie-based). Mixing with the widget's JWT-HMAC pattern would confuse both.
+  - **Multi-user per tenant.** Explicitly out of Frozen MVP scope. Invite-flow pattern established here extends naturally if we add it later.
+  - **MFA / 2FA / email verification / password reset / account recovery.** All deferred — not Frozen MVP scope. Each is a small follow-up PR when the admin dashboard is close to real pilot use.
+  - **A separate `auth` module.** Rejected per the module structure decision (2026-09-30) — admin auth is simple enough to live inside `tenant` with Spring Security config in `app`.
+- Consequences:
+  - **New env vars BEFORE merge** on any staging deploy: `WISEGIFT_ADMIN_INVITE_TOKEN_SECRET` (required — app boot-fails if missing, same loud-failure pattern as `WISEGIFT_ENCRYPTION_KEY`). Google OAuth vars are optional. Render runbook follow-up to append these to the env-vars inventory.
+  - **`ShopifyInstallFlowIT` behaviour change**: the redirect URL asserted at the end of a successful install now points at `/admin/signup?token=...` instead of `/oauth/shopify/success`. Updated test asserts the new URL + verifies the token verifies via `InviteTokenService`.
+  - **New Spring Security filter chain means the webhook receivers from PR 2 now sit behind a security filter.** Needs explicit `permitAll` + `csrf.ignore` for `/webhooks/shopify/**` so Shopify's unauthenticated POSTs still land correctly. Covered in `AdminSecurityConfig`.
+  - **Future admin frontend repo** (`wisegift-admin`, Next.js per settled architecture) consumes the endpoints from this PR. Signup page is its first screen. Not blocked by frontend's absence — backend endpoints are testable via curl / Postman today.
+- Rough effort: 4–5 focused days. Spring Security filter chain config is the trickiest part (session cookie semantics, CSRF strategy, multiple auth paths with different stateful-ness). Google OAuth integration is well-trodden territory via `spring-boot-starter-oauth2-client`.
+- Follow-ups:
+  - `backend-engineer` executes the plan on `feature/admin-auth` off `develop`.
+  - `devops-expert` appends the three new env vars to `render-staging-env-vars.md` runbook (small edit, not blocking the code).
+  - After merge: `product-analyst` opens the discussion on when to create `wisegift-admin` repo (Next.js) — admin endpoints exist now but have no UI consumer.
+- Next PR unlocked: **PR 4 — Catalog module.** Shopify Admin API catalog ingest + product webhooks. First `tenant_products` rows. Admin-only sync-control endpoints (now have real auth guards thanks to PR 3).
+- Made by: Product Owner (advised by claude)
+
 ## 2026-09-30 — Backend PR 2 plan: Shopify OAuth install flow + `platform-integrations` module
 - Context: With PR 1 (foundation) merged and the 7-module structure defined, PR 2 stands up the `platform-integrations` module and the Shopify OAuth install handshake. At merge, a merchant can install WiseGift (custom app or public App Store — same code path) and end up with a fresh `tenants` + `platform_credentials` row. First real HTTP endpoint in the backend. Blocks PRs 3 (admin auth) and 4 (catalog ingest), so it's the critical-path next step. Plan drafted in the session and locked here so `backend-engineer` picks up execution against a fixed brief (same discipline as PR 1).
 - Decision — scope of PR 2:
