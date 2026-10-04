@@ -327,6 +327,47 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-04 — Backend PR 7 plan: live rec engine (Claude Haiku 4.5 + cache + guardrails + kill switch + cost telemetry)
+- Context: PR 6 landed the widget-facing API with pure pgvector retrieval (no ranking). PR 7 adds the live LLM path: Claude Haiku 4.5 ranks the retrieved candidates. All the cost-guardrails infrastructure from the frozen MVP scope lands here — response cache, per-tenant usage cap, per-tenant kill switch, per-session rate limit, cost telemetry writes, Sonnet escalation flag. **Not in this PR**: precomputed cold recs (deferred to a separate PR when a pilot shows the fallback is needed; pgvector top-K is the acceptable degradation for pilot phase).
+- Decision — scope of PR 7:
+  1. **Claude Haiku 4.5 ranking inside `recommendation` module.** `RecommendationService` extended with a live-LLM path: pgvector top-K retrieval → compose ranking prompt → call Haiku → re-order candidates → return. `rank_score` on the response becomes the LLM-assigned score (0..1). `served_from` becomes `"live_llm"` on success.
+  2. **Anthropic client in `recommendation` module.** New `AnthropicClient` port + `ClaudeRankingClient` adapter calling Claude's `/v1/messages` endpoint. HTTP/1.1 pinned (same lesson as PR 2 Shopify + PR 5 OpenAI). Mock mode: `MockClaudeClient` returns deterministic ranking (reverse-order of input, say) selected via `wisegift.anthropic.mock=true` so local dev + CI don't need an Anthropic API key.
+  3. **Response cache (Redis, 24h TTL).** Cache key: `wg:rec:cache:{tenant_id}:{intent_signature}:{context_signature}`. `intent_signature` is SHA-256 of canonicalised intent payload (sorted interests, bucketed budget bands — buckets TBD at first pilot, start with quartiles of tenant catalog's price distribution, document). `context_signature` is SHA-256 of `{placement, platform_product_id}`. Cache hit → `served_from = "cache"`, no LLM call, no cost telemetry write. Cache miss → compute via live_llm path, write to cache before returning. Design target 60 % hit rate, operating band 40–85 % (per 2026-09-29 "Resolved 6 open questions"); exposed as a telemetry metric, not SLA.
+  4. **Per-tenant monthly usage cap.** Checked BEFORE every live-LLM call via Redis counter `wg:cap:{tenant_id}:{YYYY-MM}`. Default 50k live-LLM recs/mo (`tenants.monthly_usage_cap` column). Over cap → fall back to `pgvector` path with `served_from = "pgvector"`. Admin banner (text TBD) renders in dashboard when tenant hits cap (dashboard not built yet; backend state sufficient).
+  5. **Per-tenant kill switch.** Redis flag `wg:kill:{tenant_id}` (bool + reason string). Set automatically when `cost_telemetry` detects daily-spend threshold crossed (threshold TBD at first pilot per 2026-09-29 "Resolved 6 open questions"; placeholder `monthly_cap / 30 × 1.5` for pilot default). Flipped tenants always serve `pgvector` fallback, `served_from = "precomputed"` (even though we're actually using pgvector — reserving `"precomputed"` as the canonical "degraded" signal). Admin alerted on flip (log at ERROR + stub a `KillSwitchAlertListener` interface; actual alerting infra is later ops concern).
+  6. **Per-session rate limit.** Redis counter `wg:rate:{session_id}:{YYYY-MM-DD-HH}`, max 20 live-LLM calls per session per hour (per 2026-09-29 "Frozen MVP scope"). Over limit → fall back to cache (if hot) or pgvector. Reads session_id from `WidgetPrincipal` (JWT claim from PR 6).
+  7. **Cost telemetry writes.** Every live-LLM call writes to `cost_telemetry` table (owned by `recommendation` per 2026-09-30 module structure). Fields: `tenant_id`, `placement`, `model` (e.g. `"claude-haiku-4-5-20250101"` — exact snapshot), `input_tokens`, `output_tokens`, `cache_hit = false`, `served_from = "live_llm"`, `latency_ms`, `occurred_at`. Writes done async via a `@Async("costTelemetryExecutor")` so they don't block the response.
+  8. **Sonnet escalation flag.** Reads `tenants.feature_flags` JSONB column (from PR 1's schema). If `sonnet_escalation = true`, use Claude Sonnet 4.6 instead of Haiku. Per-tenant boolean, no per-flow override (per 2026-09-29 "Resolved 6 open questions" — unbundled to per-flow is a v2 lever). Flag read is cheap (part of the tenant query already happening); no runtime switch.
+  9. **Fallback decision tree (per `recommendations.md` §4.1):**
+     - Cache hit → return cached response. `served_from = "cache"`.
+     - Guardrail trips (cap/kill switch/rate limit) → pgvector path. `served_from = "precomputed"` for kill switch, `"pgvector"` for cap/rate limit.
+     - No real intent (bare PDP view, no intent form submitted) → pgvector path. `served_from = "precomputed"`. (Precomputed cold recs would ideally live here; pgvector is the acceptable MVP degradation.)
+     - Live LLM path: embed intent → pgvector top-50 retrieval → Haiku ranking → return top-N. Write to cache. `served_from = "live_llm"`.
+     - LLM error / timeout > 2s / zero candidates → pgvector fallback. `served_from = "fallback"`.
+- Five placement calls locked:
+  1. **Haiku 4.5 as default, Sonnet 4.6 behind per-tenant flag.** Default is cheap. Flag controlled via admin API (not built yet; set manually via DB for pilot escalations). Per 2026-09-29 "Resolved 6 open questions" — boolean per tenant, not per-flow.
+  2. **Response cache key composition locked**: `{tenant_id, intent_signature(sorted interests + bucketed budget + occasion + relationship + intent_mode), context_signature(placement, platform_product_id)}`. Documented in `RecommendationService` Javadoc; changing invalidates all cached responses.
+  3. **Cost telemetry writes async**, never blocking the response. `@Async("costTelemetryExecutor")` with dedicated 2-thread pool. If a write fails, logged at WARN, response still returned successfully — telemetry is observability, not correctness.
+  4. **Fallback hierarchy locked**: cache → live_llm → pgvector. No precomputed cold recs this PR. Documented as a known MVP degradation; precomputed PR comes later if a pilot asks.
+  5. **Guardrail check order locked**: usage cap → kill switch → session rate limit → real-intent check → live LLM. Hard-coded in `RecommendationService.recommend(...)` so the ordering is a single-reader concern.
+- Rejected alternatives:
+  - **Precomputed cold recs in PR 7.** Adds a `@Scheduled` precompute job + the `precomputed_recs` write path + the PDP-context routing. Big scope. Pilot phase can degrade to pgvector top-K (what PR 6 provides); add precomputed when a pilot shows real need.
+  - **Live telemetry writes synchronous** (block response). Rejected: adds 10-20 ms to every rec call for observability data, which is the wrong latency trade for the merchant.
+  - **Per-flow Sonnet escalation** (gift uses Sonnet, self uses Haiku). Rejected per 2026-09-29 decision — unbundled is v2 after pilot data shows gift-intent lift.
+  - **Caching across tenants.** Rejected: cache key always includes `tenant_id` to prevent cross-tenant leakage (same P0 as all tenant_id invariants).
+- Consequences:
+  - **Two new env vars**: `WISEGIFT_ANTHROPIC_API_KEY` (required in prod when `wisegift.anthropic.mock=false`), `WISEGIFT_ANTHROPIC_MOCK` (optional, defaults false in prod, set `true` in dev + CI). Add to Render runbook follow-up.
+  - **First Anthropic cost on staging**: order of magnitude higher than OpenAI embedding cost. Haiku 4.5 ~$1/MTok input + ~$5/MTok output; typical rank call ~500 input + ~100 output tokens → ~$0.0001/call. 50k calls/mo = ~$5/mo. Trivial at pilot scale.
+  - **`cost_telemetry` table starts receiving rows.** Grafana Cloud EU promotion (per 2026-09-29 "Architecture open questions closed") remains post-MVP; Postgres `cost_telemetry` is the primary store for the pilot phase.
+  - **`recommendation` module no longer needs to be re-shaped** by downstream PRs — the retrieve-rank-cache-guardrail pipeline is the final MVP shape. PR 8 (orders) touches `events`, not `recommendation`.
+- Rough effort: 7–10 focused days. Biggest surface area of any PR — the retrieve-rank-cache-guardrail-telemetry pipeline is where all the frozen-scope decisions compound.
+- Follow-ups unblocked:
+  - **PR 8**: order webhook + attribution. Separate concern.
+  - **Precomputed cold recs**: separate PR when a pilot asks for better cold-start quality than pgvector top-K.
+  - **Haiku prompt tuning**: not a code concern; the prompt text is a configuration dial that moves with pilot data.
+  - `devops-expert` appends 2 new env vars to `render-staging-env-vars.md` runbook.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-04 — Backend PR 6 plan: widget-facing API stubs (recommendation + events modules)
 - Context: With PRs 1-5 merged, backend has tenants + credentials + admin auth + catalog ingest + embeddings. Widget scaffold has rendered end-to-end on a Shopify dev store but has no backend to call. PR 6 lands two new modules — `recommendation` and `events` — plus the JWT-HMAC widget token mechanism (settled 2026-09-29 in "Architecture open questions closed"). First time the widget can authenticate, request recommendations, and emit events against the real backend. **No LLM ranking yet** — PR 7 adds Claude Haiku 4.5. **No cost telemetry writes, no kill switch, no cache, no session rate limit** — all PR 7 territory. This PR is the pipe; PR 7 fills it with brains.
 - Decision — scope of PR 6:
