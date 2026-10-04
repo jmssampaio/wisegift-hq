@@ -327,6 +327,44 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-04 — Backend PR 6 plan: widget-facing API stubs (recommendation + events modules)
+- Context: With PRs 1-5 merged, backend has tenants + credentials + admin auth + catalog ingest + embeddings. Widget scaffold has rendered end-to-end on a Shopify dev store but has no backend to call. PR 6 lands two new modules — `recommendation` and `events` — plus the JWT-HMAC widget token mechanism (settled 2026-09-29 in "Architecture open questions closed"). First time the widget can authenticate, request recommendations, and emit events against the real backend. **No LLM ranking yet** — PR 7 adds Claude Haiku 4.5. **No cost telemetry writes, no kill switch, no cache, no session rate limit** — all PR 7 territory. This PR is the pipe; PR 7 fills it with brains.
+- Decision — scope of PR 6:
+  1. **New `recommendation` module** per the 2026-09-30 module structure entry. Hexagonal shape. Owns `cost_telemetry` (table exists from PR 1 but gets no writes this PR — PR 7 adds them). HTTP: `POST /widget/v1/session`, `POST /widget/v1/recommendations`.
+  2. **New `events` module** per the same entry. Hexagonal shape. Owns `sessions`, `events`, `orders_attributed` (last one gets no writes until PR 8). HTTP: `POST /widget/v1/events`. Publishes `AnalyticsQueryPort` for the future admin dashboard analytics endpoints.
+  3. **JWT-HMAC widget token** issued by `/widget/v1/session`. HS256-signed with `wisegift.widget.token-secret`. Payload: `{tenant_id, session_id, origin, iat, exp}`. 1-hour expiry (per 2026-09-29 "Architecture open questions closed"). Verified by a Spring Security filter in `app/` for every `/widget/v1/*` call except `/session` itself.
+  4. **Origin allowlist on `/widget/v1/session`**. Request's `Origin` header must match `platform_credentials.platform_shop_domain` or `custom_domain` for the tenant. Prevents arbitrary domains issuing widget tokens for someone else's tenant.
+  5. **Rec retrieval via pgvector top-K**. `CatalogQueryPort` extended with `findNearest(TenantId, float[] queryVector, int k)` using pgvector `<->` cosine. For PR 6, intent → embedding → top-K. No ranking, no Claude.
+  6. **Intent embedding at query time**: `recommendation` module uses `EmbeddingClient` from `catalog` (same OpenAI/Mock pattern from PR 5). Intent payload (recipient relationship + occasion + budget + interests) composed via a deterministic string, embedded, used for retrieval. Keeps the embedding provider logic in one place.
+  7. **Session + holdout**. First `widget_shown` event creates the `sessions` row with sticky holdout via `hash(session_id) mod 100 < 10 → holdout = true`. **Never re-rolled** — per architecture.md's hard requirement. Session row carries `tenant_id`, `is_holdout`, `first_seen_at`, `last_seen_at`.
+  8. **Event ingest batching**. `POST /widget/v1/events` accepts up to 10 events per request (per spec.md Event API feature). Writes to `events` table + bumps `sessions.last_seen_at`. Event types: `widget_shown`, `widget_engaged`, `intent_submitted`, `product_clicked`. All validated against the fixed enum.
+  9. **Widget config returned from `/widget/v1/session`**. Reads `widget_config` row (owned by tenant module — new query port on tenant): copy, placement enabled list, theme_tokens, border_radius_px, brand_accent_color. Widget uses this to render + apply theming.
+  10. **One new env var**: `WISEGIFT_WIDGET_TOKEN_SECRET` — HMAC secret for widget JWTs. Required (boot-fails if missing, same pattern as `WISEGIFT_ADMIN_INVITE_TOKEN_SECRET` from PR 3).
+- Five placement calls locked:
+  1. **Widget JWT verification: Spring Security filter in `app/`, not controller-level.** `WidgetAuthFilter` sits in the filter chain before controllers, extracts + verifies the JWT, populates a `WidgetPrincipal` (tenant_id + session_id + origin) on the request. Controllers inject `WidgetPrincipal` as a method parameter. Cleaner than controller-level checks + reusable for every widget endpoint.
+  2. **Intent embedding happens inside `recommendation` module, not `catalog`.** Catalog embeds products; recommendation embeds intents. Different concerns, different content shapes. Both use the same `EmbeddingClient` port + implementation (OpenAI or Mock).
+  3. **Session row created on first `widget_shown` event, not on `/session` bootstrap.** `/session` is per-tenant (returns widget config + token); sessions are per-shopper. Decoupling means a tenant can issue a token that the shopper never actually uses — no orphan `sessions` row. Holdout assignment happens exactly once, at first event.
+  4. **Rec result shape locked**: `{recommendations: [{platform_product_id, slug, title, price, image_url, rank_score}], cache_hit: false, served_from: "pgvector"}`. `rank_score` is cosine similarity (0..1). `cache_hit` + `served_from` are present for PR 7 wire-compatibility; always `false` and `"pgvector"` at PR 6.
+  5. **`/widget/v1/events` is fire-and-forget from widget's perspective** — returns 202 Accepted with no body. Processing happens async via `@Async("eventIngestExecutor")`. Even if a batch takes 500ms to process, the widget response is sub-50ms.
+- Rejected alternatives:
+  - **Opaque session tokens in Redis** (instead of JWT). Rejected: JWT is stateless, no Redis hit per request, scales horizontally. The 1-hour expiry limits exposure.
+  - **Session cookie for widget auth** (like admin). Rejected: widget runs on third-party domain (merchant storefront) — cross-origin cookies are a maintenance nightmare. JWT in `Authorization: Bearer` header is clean.
+  - **Rank in PR 6 using heuristics** (no LLM, but something smarter than pure cosine). Rejected: scope creep. PR 7 adds Haiku; PR 6 is pure pipe-building.
+  - **Cost telemetry writes in PR 6**. Rejected: no LLM calls to meter; writing just the embedding call's cost adds inconsistency when PR 7 lands with the full tag set.
+  - **Session cookie + CSRF on `/widget/v1/*`**. Rejected: widget is API-only (not form-submitting a browser); JWT + no CSRF is the right shape.
+- Consequences:
+  - **New env var before merge**: `WISEGIFT_WIDGET_TOKEN_SECRET`. Boot-fails if missing. Add to Render runbook follow-up. Generate with `openssl rand -base64 32`.
+  - **`widget_config` table (empty in production currently) needs seed data**. The merchant admin dashboard will CRUD this; until then, Shopify install flow (PR 2) is extended to insert a default `widget_config` row with the WiseGift defaults on tenant provisioning. Small cross-module touch to `platform-integrations.ShopifyInstallService`.
+  - **First consumer of the embedding pipeline (PR 5)**. If embedding writes fail or lag, recommendations degrade silently (returns empty top-K). Logged at WARN; alerting is a later ops concern.
+  - **Widget frontend can resume feature work** against real API contracts. The intent hook + intent form + rec display + event emission features in `wisegift-widget` can start calling these endpoints the moment PR 6 is on staging.
+- Rough effort: 5-7 focused days. The JWT filter + origin allowlist + session/holdout logic + two new modules + extended install flow. Not larger than PR 4 but denser.
+- Follow-ups unblocked:
+  - **PR 7**: `recommendation` module gains Claude Haiku 4.5 ranking + cache + guardrails + kill switch + cost telemetry. Rec result shape is already locked; only the ranking source changes.
+  - **PR 8**: `events` module gains the Shopify order webhook receiver + attribution join (session → order linkage).
+  - **Widget features** in `wisegift-widget` can start immediately (first feature: intent hook, no backend dependency; subsequent features consume these PR 6 endpoints).
+  - `devops-expert` appends 1 new env var to `render-staging-env-vars.md` runbook.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-04 — Backend PR 5 plan: embeddings pipeline (OpenAI text-embedding-3-small)
 - Context: With PR 4 merged, `tenant_products` rows land on install + webhook deltas with `content_hash` populated but `embedding` nullable. PR 5 computes embeddings via OpenAI's `text-embedding-3-small` (settled in 2026-09-29 "Architecture open questions closed"), writes them to `tenant_products.embedding`, stamps `embedding_model_version` + `last_embedded_at`. First real external AI call in the stack. Unblocks retrieval in PR 6/7.
 - Decision — scope of PR 5:
