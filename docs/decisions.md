@@ -327,6 +327,58 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-05 — Backend PR 7b plan: Anthropic ranking (Claude Haiku 4.5 default + Sonnet 4.6 escalation flag)
+- Context: PR 7a merged, delivering the degraded-serving path (cache + guardrails + pgvector fresh-compute). PR 7b plugs Claude Haiku 4.5 into the fresh-compute slot: `pgvector top-50 → Anthropic rank → return top-N`. The cache + guardrail code shipped by 7a stays byte-for-byte identical; only the fresh-compute branch of `RecommendationService.recommend(...)` changes and the `servedFrom` label on success flips from `"pgvector"` to `"live_llm"`. 7a's 2026-10-05 split entry is the binding scope reference; this entry fleshes out implementation details.
+- Decision — scope of PR 7b (branch `feature/anthropic-ranking` off latest `develop`):
+  1. **`AnthropicProperties`** `@ConfigurationProperties("wisegift.anthropic")`: `apiKey` (String, required when mock=false), `mock` (boolean, default false), `haikuModel` (default `"claude-haiku-4-5-20250101"`), `sonnetModel` (default `"claude-sonnet-4-6-20250101"`), `batchTimeout` (ms, default 2000), `retryCount` (default 3).
+  2. **`AnthropicClient` port in `application/port/out/`**: `RankingResult rank(RankingRequest)`. `RankingRequest(intent, candidates[], instructions)`. `RankingResult(rankedPlatformProductIds[], scores[], inputTokens, outputTokens, modelId, latencyMs)`.
+  3. **`ClaudeRankingClient` adapter** (Haiku) in `infrastructure/out/anthropic/`. `RestClient` with HTTP/1.1 pin (PR 2 Shopify + PR 5 OpenAI lesson). Calls `POST https://api.anthropic.com/v1/messages`. Prompt: structured "rank these N products for this intent" with strict JSON output format `{"ranking": [{"product_id": "...", "score": 0.0-1.0}, ...]}`. 429 → exponential backoff + jitter (3 retries, 1s/2s/4s ±25%). Timeout: 2s hard cap (per 7a-locked fallback decision tree). `@PostConstruct` startup validator fails loud if `wisegift.anthropic.api-key` is blank AND `wisegift.anthropic.mock=false`.
+  4. **`MockAnthropicClient`** selected via `@ConditionalOnProperty(name="wisegift.anthropic.mock", havingValue="true")`. Returns deterministic ranking: candidates in input order, scores evenly spaced in `[1.0, 0.5]`. Zero HTTP. Logs at DEBUG so tests assert the mock path.
+  5. **`SonnetRankingClient`** — same shape as Haiku, different model string. Not a bean by itself; the factory selects it per request based on tenant feature flag read.
+  6. **`AnthropicClientFactory`** in `application/service/` — reads `tenant.feature_flags.sonnet_escalation` (projection shipped in 7a) and returns the appropriate `AnthropicClient`. Haiku default, Sonnet when flag is true. One factory call per `recommend(...)` — no per-call tenant query required beyond what the service already does.
+  7. **`RecommendationService.recommend(...)` fresh-compute branch rewired.** 7a's branch was `pgvector top-K → return servedFrom="pgvector" → cache store`. 7b's branch becomes:
+     1. `IntentEmbedder.embed(intent)` → embedding vector (already available from 7a via `CatalogQueryPort`).
+     2. `CatalogQueryPort.findNearest(tenantId, vec, 50)` → top-50 candidates.
+     3. Factory picks Haiku or Sonnet based on tenant flag.
+     4. `AnthropicClient.rank(request)` with 2s timeout → `RankingResult`.
+     5. Reorder candidates per the ranking, trim to `limit`.
+     6. Return with `servedFrom="live_llm"`, write to cache.
+     7. **LLM error / timeout / zero candidates** → fall back to pgvector top-K with `servedFrom="fallback"`, log at WARN, no cache write.
+  8. **Config**:
+     - `app/application.yml`: new `wisegift.anthropic.*` block with defaults.
+     - `application-staging.yml`, `application-production.yml`: explicit `wisegift.anthropic.mock: false` (defensive).
+     - `.env.example`: add `WISEGIFT_ANTHROPIC_API_KEY` (Anthropic Console link in comment) + `WISEGIFT_ANTHROPIC_MOCK=true` with DO-NOT-set-in-prod warning.
+     - `.github/workflows/ci.yml`: add `WISEGIFT_ANTHROPIC_MOCK: "true"` to env so CI never calls real Anthropic.
+     - `FlywayMigrationIT.java`: inject `wisegift.anthropic.api-key` + `wisegift.anthropic.mock=true` via `@DynamicPropertySource`.
+  9. **Tests**:
+     - Unit: `MockAnthropicClientTest` (deterministic ranking, correct score band), `ClaudeRankingClientTest` (WireMock — happy path, 429 retries then succeeds, 429 gives up and throws, 400 fail-fast, timeout path, malformed JSON path), `AnthropicClientFactoryTest` (Haiku default, Sonnet when flag true).
+     - Integration (Testcontainers Postgres + Redis + WireMock stubbing Anthropic, pin to `RecommendationTestBoot` via `@SpringBootTest(classes = {RecommendationTestBoot.class, <ScanConfig>.class})` per 7a's hard-won pattern):
+       - `LiveRecEngineIT`: cache miss → live LLM → ranked result → `servedFrom="live_llm"` → cache populated → second call hits cache.
+       - `MockModeRecEngineIT`: `wisegift.anthropic.mock=true` → no HTTP → deterministic ranking → `servedFrom="live_llm"`.
+     - Update `WidgetRecommendationIT` from PR 6/7a: baseline live-LLM path returns `servedFrom="live_llm"` (not `"pgvector"`); on LLM error (WireMock 503 after retries) falls back to pgvector with `servedFrom="fallback"`.
+- Placement calls locked (binding for executor):
+  1. **Model IDs pinned as config constants.** `claude-haiku-4-5-20250101` + `claude-sonnet-4-6-20250101`. Changing them requires a decision entry (not a config tweak) because it affects cost_telemetry rows and reproducibility of ranking quality.
+  2. **2s hard timeout**, enforced client-side via `RestClient` request timeout AND an outer `CompletableFuture.orTimeout`. Latency SLO is p99 < 3s per `product.md`; 2s + 1s overhead budget keeps us inside.
+  3. **Factory, not conditional bean**, for Haiku-vs-Sonnet. Per-request flag read, not per-startup. Supports flipping tenant flags live without rebooting the pod.
+  4. **Fallback label `"fallback"`** reserved for LLM errors specifically. Guardrail trips still use their own labels (`"pgvector"`, `"precomputed"`) from 7a. Three distinct degraded-state signals so dashboards can distinguish.
+  5. **No `wisegift.anthropic.*` config outside the `recommendation` module.** The `AnthropicClient` port + adapters stay internal to the module; nothing in `catalog`, `tenant`, or `platform-integrations` references them. Preserves hex-arch module boundary.
+- Rejected alternatives:
+  - **GPT-4o-mini as the ranker.** ~7x cheaper per token (~$7/mo vs ~$50/mo at 50k calls/mo). Rejected for pilot: (a) prompt-caching math tilts the TCO closer at scale, (b) Sonnet escalation symmetry stays in one vendor family, (c) delta is ~$40/mo at pilot — not worth re-opening the decided call. Port-adapter design keeps a vendor swap trivial if 10M-calls/mo scale ever shows Haiku overpriced for quality delivered.
+  - **Anthropic `@Service`-stereotype SonnetRankingClient as a parallel bean.** Rejected: factory-selected at request time is cleaner — no per-tenant bean registration, no startup churn when flags flip.
+  - **Live cost telemetry writes in 7b.** Rejected per 2026-10-05 split: 7c owns the async writer. 7b wiring records tokens + latency in the `RankingResult` DTO so 7c can emit the row without re-plumbing.
+  - **Anthropic prompt caching enabled in 7b.** Rejected for first pass: prompt caching requires explicit `cache_control` blocks and benefits only land on repeat hits within a 5-min window. Pilot volume may not amortize. Revisit after live traffic shows prompt-cache hit rate is worth the complexity.
+- Consequences:
+  - **Two new env vars** added to Render runbook follow-up (`devops-expert` appends `WISEGIFT_ANTHROPIC_API_KEY` + `WISEGIFT_ANTHROPIC_MOCK` to `render-staging-env-vars.md` when 7b lands).
+  - **First merchant-visible quality lift** — Haiku ranks pgvector candidates. Showcase candidate for first design partner.
+  - **Anthropic becomes a sub-processor** in the data-flow diagram (if not already — Claude Code use covers Anthropic-the-vendor, but production inference is a new processing purpose). `security-and-privacy` reviews DPA diff before pilot activation.
+  - **`cost_telemetry` writes still deferred to 7c.** `RankingResult.inputTokens / outputTokens / latencyMs` flow through `RecommendationService` but go nowhere until 7c wires the sink.
+  - **Staging smoke after 7b merges**: hit `POST /widget/v1/recommendations` with a known intent, confirm response includes `servedFrom="live_llm"` and the ranking looks reasonable. Mock mode OFF on staging.
+- Rough effort: 3–4 focused days. Smaller than 7a (less infra, more wiring).
+- Follow-ups unblocked:
+  - PR 7c (cost telemetry) uses the token counts PR 7b now plumbs through.
+  - Prompt tuning becomes a config dial — the Haiku prompt text lives in `ClaudeRankingClient` as a constant; iterating is a one-line change.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-05 — Backend PR 7 split into 7a / 7b / 7c
 - Context: PR 7 (live rec engine) is 7-10 days of focused work spanning 9 workstreams. Two sequential backend-engineer agent runs on `feature/live-rec-engine` both terminated with transport errors (API 400, then stream idle timeout at ~10h). Partial progress is preserved on the branch (7 out-ports, 3 guardrail checks, FeatureFlags domain, pom updates, tenant feature-flag read). Rather than retry a monolithic agent run that keeps running out of execution budget, split PR 7 into three sequential sub-PRs that each fit a single agent run. The 2026-10-04 "Backend PR 7 plan" entry remains the source of truth for the overall shape; this entry only governs the slicing.
 - Decision — three sub-PRs, sequential, merged in order:
