@@ -327,6 +327,54 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-05 — Backend PR 7c plan: cost telemetry (async writes to cost_telemetry)
+- Context: PR 7a shipped the dormant `CostTelemetrySink` port + `Sample` record (fields map 1:1 to the V1 `cost_telemetry` table). PR 7b plumbed `inputTokens`, `outputTokens`, `latencyMs`, `modelId` through `RankingResult`. PR 7c closes the loop: wire a Postgres adapter + async writer so every successful live-LLM call lands one row in `cost_telemetry` without blocking the response. Completes the PR 7 trilogy. The 2026-10-05 split entry remains the binding scope reference; this entry fleshes out implementation details.
+- Decision — scope of PR 7c (branch `feature/cost-telemetry` off latest `develop`, which includes 7b):
+  1. **`CostTelemetry` JPA entity** on existing `cost_telemetry` table (V1 schema — no migration this PR). Column mapping: `id` (BIGSERIAL/`Long`), `tenant_id` (UUID), `placement` (VARCHAR32), `model` (VARCHAR32), `input_tokens`/`output_tokens` (INTEGER), `cache_hit` (BOOLEAN), `served_from` (VARCHAR16), `latency_ms` (INTEGER), `occurred_at` (TIMESTAMPTZ/`Instant`). Lombok `@Builder` + `@AllArgsConstructor` + no-arg per PRs 1-7 convention.
+  2. **`CostTelemetryJpaRepository`** `extends JpaRepository<CostTelemetry, Long>` in `recommendation/infrastructure/out/persistence/`. Spring Data auto-impl, nothing custom.
+  3. **`CostTelemetryRepositoryAdapter`** `implements CostTelemetrySink` — maps `Sample` → `CostTelemetry` entity, saves via the JPA repo. One `@Autowired` ctor.
+  4. **`CostTelemetryWriter`** `@Service` with `@Async("costTelemetryExecutor")` on `write(Sample)`. Internally delegates to `CostTelemetrySink.write(...)`. Catches `DataAccessException` + generic `Exception`, logs at WARN with tenant + placement + error reason, swallows (telemetry is observability, not correctness — a persistence failure must never 500 the merchant's rec call). `CostTelemetryWriter` is the ONLY call site for the sink; `RecommendationService` depends on the writer, not the sink.
+  5. **`CostTelemetryAsyncConfig`** in `app/src/main/java/com/wisegift/async/` with `@EnableAsync` + `costTelemetryExecutor` bean: `ThreadPoolTaskExecutor` with `corePoolSize=1`, `maxPoolSize=2`, `queueCapacity=1000`, `threadNamePrefix="cost-telem-"`, `rejectedExecutionHandler = CallerRunsPolicy`. CallerRuns is deliberate: if the queue is saturated (writer thread stuck), the calling request thread writes synchronously. Degrades response latency rather than losing telemetry.
+  6. **`RecommendationService` emits telemetry on the live-LLM success path ONLY.** New dependency on `CostTelemetryWriter`. Emit after the ranking succeeds, before cache store:
+     ```
+     writer.write(new Sample(tenantId, placement, result.modelId(),
+                             result.inputTokens(), result.outputTokens(),
+                             false, "live_llm", (int) result.latencyMs(),
+                             Instant.now()));
+     ```
+     Cache hits: NO emit (no LLM call, no spend to observe). Guardrail fallbacks (`servedFrom="pgvector"`/`"precomputed"`): NO emit (no LLM call). LLM error → `servedFrom="fallback"`: NO emit this PR (error-count metric is a separate concern; emitting zero-token rows muddies the "LLM spend" semantics).
+  7. **`occurred_at`** = `Instant.now()` captured at emit time inside `RecommendationService` (not inside the writer), so the timestamp reflects when the LLM call completed, not when the async executor got around to persisting it. Captured on the request thread, carried in the `Sample`.
+  8. **Tests**:
+     - Unit: `CostTelemetryRepositoryAdapterTest` — maps Sample → entity correctly, calls repo.save. `CostTelemetryWriterTest` — swallows DataAccessException without rethrowing. `@Async` is NOT tested at unit level (hard to assert async semantics without a running executor); covered by the IT.
+     - Integration (Testcontainers Postgres + Redis + WireMock, pin via `@SpringBootTest(classes = {RecommendationTestBoot.class, <ScanConfig>.class})` per PR 7a/7b pattern):
+       - `CostTelemetryIT`: one live LLM rec call → poll `cost_telemetry` row count briefly (Awaitility `atMost(2, SECONDS)`) → exactly one row with correct tenant/placement/model/tokens/latency/cacheHit=false/servedFrom=`"live_llm"`.
+       - Negative cases in the same IT: cache hit on a repeated call → row count stays at 1 (no new row). Guardrail trip (kill switch) → row count stays at 1.
+     - Update `LiveRecEngineIT` to assert ONE row in `cost_telemetry` after the first live call completes.
+- Placement calls locked (binding for executor):
+  1. **Emit on live-LLM success ONLY** — not on cache hits, not on guardrail fallbacks, not on LLM error paths. Rationale: `cost_telemetry` answers "what did LLM spend cost us?" — only successful LLM calls spent money we care to track.
+  2. **CallerRunsPolicy on queue saturation** — degrades response latency, never drops telemetry. The reverse (silent drop) would make cost dashboards misleading at exactly the moment they matter (traffic spike).
+  3. **Writer swallows persistence errors with WARN** — never bubbles up. Telemetry outage must not break merchant responses.
+  4. **`occurred_at` captured on the request thread**, not inside the async worker. Timestamp reflects reality, not scheduler lag.
+  5. **No new migration this PR** — V1 already shipped the `cost_telemetry` table. If the schema needed any change, that would be V3 and a separate decision entry.
+- Rejected alternatives:
+  - **Synchronous writes** (block the response until Postgres acks). Rejected per 2026-10-04 PR 7 plan placement call 3 — adds 10-20ms to every rec call for observability data, which is the wrong latency trade.
+  - **Write on cache hits too** (track every served response). Rejected: observability of `served_from=cache` is better captured in request logs; `cost_telemetry` is specifically the LLM-spend observability stream.
+  - **Spring `ApplicationEvent` + `@EventListener`-with-`@Async`** for the emit path. Rejected: a sink port + writer is the simpler shape and keeps the serving decision explicit at the call site. Spring Events trade clarity for decoupling we don't need here.
+  - **Direct push to Grafana Cloud EU** instead of Postgres. Rejected per 2026-09-29 "Architecture open questions closed" — Postgres is MVP primary store; Grafana promotion is post-MVP.
+  - **Capture `occurred_at` inside the async worker.** Rejected per placement call 4 — scheduler lag would smear the timeline.
+- Consequences:
+  - **`cost_telemetry` starts receiving rows** on merge. Row volume at pilot scale: ~50k rows/mo per tenant (live-LLM calls). Negligible storage; one tenant_id+occurred_at index already in V1 schema makes "tenant spend last 30d" queries index-only.
+  - **New runtime dependency**: `@EnableAsync` + a ThreadPoolTaskExecutor bean. If the executor fails to boot, context fails to boot — surfaces at startup, not first request.
+  - **Admin spend dashboard** becomes buildable (future PR). Query shape: `SELECT model, SUM(input_tokens), SUM(output_tokens), COUNT(*) FROM cost_telemetry WHERE tenant_id = ? AND occurred_at > ? GROUP BY model`.
+  - **Pilot kill-switch automation** becomes a cron reading `cost_telemetry` daily and flipping `wg:kill:{tenant}` when a tenant exceeds `tenants.daily_spend_cap`. Not in this PR but 7a's kill switch is now feedable from real data.
+  - **Completes PR 7 trilogy** — 7a/7b/7c together deliver the full live rec engine with guardrails + Haiku ranking + spend observability.
+- Rough effort: 1-2 focused days. Smallest of the three.
+- Follow-ups unblocked:
+  - **PR 8**: order webhook + attribution. Separate concern.
+  - **Admin spend dashboard** (frontend PR when the admin repo exists).
+  - **Daily kill-switch cron** that reads `cost_telemetry` and auto-flips the kill switch at `daily_spend_cap`. Separate PR when a pilot needs it.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-05 — Backend PR 7b plan: Anthropic ranking (Claude Haiku 4.5 default + Sonnet 4.6 escalation flag)
 - Context: PR 7a merged, delivering the degraded-serving path (cache + guardrails + pgvector fresh-compute). PR 7b plugs Claude Haiku 4.5 into the fresh-compute slot: `pgvector top-50 → Anthropic rank → return top-N`. The cache + guardrail code shipped by 7a stays byte-for-byte identical; only the fresh-compute branch of `RecommendationService.recommend(...)` changes and the `servedFrom` label on success flips from `"pgvector"` to `"live_llm"`. 7a's 2026-10-05 split entry is the binding scope reference; this entry fleshes out implementation details.
 - Decision — scope of PR 7b (branch `feature/anthropic-ranking` off latest `develop`):
