@@ -327,6 +327,87 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-06 — Shopify Theme App Extension plan (widget on storefront)
+- Context: Staging deploy wrap confirmed the backend serves recommendations end-to-end to a Shopify dev store (merchant `wisegift-dev.myshopify.com`), but the widget bundle itself only exists as a hostable JS artifact in `wisegift-widget` — nothing yet makes it render inside the merchant's theme. Shopify's native path to inject app-owned UI into a merchant's storefront is a **Theme App Extension**: a bundle of Liquid templates + static assets registered against the Shopify app, which merchants enable through the theme editor ("Add app embed" / "Add block"). Blocks the first pilot — a merchant can't see the widget without this.
+- Decision — scope of the first Theme App Extension (branch `feature/theme-extension` off latest `main` of `wisegift-widget`):
+  1. **`theme-extension/` subdirectory inside `wisegift-widget`.** Theme extension lives next to the widget source — same team owns both, same CI builds both, same `npm run build` emits the artifacts the extension references. The backend `wisegift-backend` repo does not host it (keeps backend code free of Liquid templates).
+  2. **Extension type: `app_embed_block`.** Renders anywhere on the storefront without the merchant having to pick a theme section. Simpler for pilot — merchant toggles it on, we auto-mount our Web Component on the current page. Can later add `app_block` variants for specific placements (home_hero, pdp_slot) when the pilot asks.
+  3. **`shopify.extension.toml` manifest** declares the extension type, name (`wisegift-widget`), target block (`app_embed_block`), and settings schema. Settings schema MUST expose the subset of config merchants can self-serve from the theme editor (per 2026-09-29 "Widget theming" and spec.md): hook copy override, brand accent color override, placements enabled toggles. Reads these on each page load; forwards to the Web Component via data attributes.
+  4. **`blocks/wisegift_widget.liquid`** emits the Shopify-native embed:
+     - A `<script>` tag loading the Preact widget bundle from the extension's `assets/` folder (served via Shopify's CDN after `shopify app deploy`)
+     - A `<wisegift-widget>` Web Component tag with `data-tenant-id`, `data-shop-domain`, `data-session-endpoint` attributes
+     - Minimal inline CSS reset so the shadow-DOM boundary stays clean
+  5. **`assets/widget.js`** = the current `wisegift-widget` production bundle (`npm run build` output, ≤ 50 KB gzipped target still enforced). Vite config may need a tweak to emit to `theme-extension/assets/` as part of the production build so the extension picks up the latest bundle without manual copies.
+  6. **Tenant discovery on the shop side**: the Liquid template reads `{{ shop.permanent_domain }}` and passes it to the widget as `data-shop-domain`. The widget calls `POST /widget/v1/session` with that domain in the `Origin` header; the backend already matches it against `platform_credentials.platform_shop_domain` (PR 6 logic). No tenant_id leaked to the client (correct — pilot deliberately kept the tenant lookup server-side).
+  7. **Backend-URL config**: widget needs to know the backend base URL (`https://wisegift-backend-staging.onrender.com` for staging, prod URL later). Options:
+     - Hardcode in the Liquid template per environment, swap on deploy (simple, forces per-env extension version)
+     - Expose as an extension setting (merchant-visible, bad — this isn't their choice)
+     - Expose as an app proxy route (`https://<shop>.myshopify.com/apps/wisegift/*` → forwards to our backend; cleanest, requires App Proxy config in the Partner app)
+     Pick: **hardcode for pilot, document the swap**. App Proxy is a Shopify-side config change we can migrate to without rebuilding the extension.
+  8. **Deploy workflow**: Shopify CLI (`shopify app deploy`) is the only path. Our backend has an app registered via Partner Dashboard; the CLI binds the extension to that app via `shopify.app.toml` at the widget repo root. Developer runs `shopify app deploy` locally after merging; later this becomes a GitHub Actions job triggered by the widget's main-branch deploy workflow.
+  9. **Smoke test flow after first deploy**:
+     - `shopify app deploy` from `wisegift-widget` repo → Shopify CDN serves the bundle
+     - Dev store admin → **Online Store** → **Themes** → **Customize** → **App embeds** → enable **WiseGift Widget**
+     - View storefront → widget renders → hits backend session endpoint → merchant sees intent hook → full rec flow
+  10. **Pilot defaults locked**: hook copy = `"Are you looking for something for you, or for someone else?"` (same as backend widget_config default), placements enabled = `["home_hero"]` only initially (keeps the pilot focused; adds `pdp_slot` + `gift_finder` as separate PR after v1 feedback).
+- Placement calls locked:
+  1. **`app_embed_block` first, `app_block` later.** Minimum merchant setup effort for pilot.
+  2. **Backend URL hardcoded per-env** in the Liquid template. Explicitly not an extension setting (not a merchant choice); explicitly not an App Proxy for pilot (migrate when a merchant asks for it).
+  3. **Settings schema narrow**: hook copy + brand accent color + placements enabled. Theme tokens (border-radius, fonts) stay inherited from the merchant's theme CSS variables (per 2026-09-29 "Widget theming" fallback chain) — not duplicated as extension settings.
+  4. **Widget bundle lives inside the extension's `assets/`** at build time; Shopify's CDN serves it. We do not host the bundle on our own CDN at this stage — one less dependency during pilot.
+  5. **Deploy is manual via `shopify app deploy`** at pilot; GitHub Actions automation lands as a follow-up PR after we see the manual workflow in action.
+- Rejected alternatives:
+  - **Script-tag injection via Shopify ScriptTag API** (merchant installs app → we POST a script tag that loads our bundle). Rejected: ScriptTag API is deprecated for new apps and does not work on checkout; Theme App Extensions are the Shopify-sanctioned path.
+  - **Build inside `wisegift-backend` repo.** Rejected: couples two unrelated artifacts (backend JAR + Liquid templates), slows backend CI, mixes concerns.
+  - **One extension per placement** (`home_hero_block`, `pdp_block`, …). Rejected for v1: adds merchant setup burden. `app_embed_block` handles routing to the right placement based on page type via the widget's own logic.
+  - **App Proxy on day one.** Rejected for pilot: adds Partner Dashboard config complexity + CORS concerns. Hardcoded URL ships faster.
+  - **Hosting the bundle on our own CDN.** Rejected: adds Cloudflare / Fastly config, cache invalidation planning. Shopify's CDN is free and co-located with merchant stores (lower latency).
+- Consequences:
+  - **`wisegift-widget` build output** gains a secondary target (`theme-extension/assets/widget.js`) alongside the existing `dist/`. Vite config updated accordingly.
+  - **Shopify app config** gains an extension registration. Partner Dashboard shows "WiseGift Widget" under the app's extensions section after first `shopify app deploy`.
+  - **Merchant onboarding step added**: after OAuth install, merchant must enable the app embed in theme editor. Document in the pilot activation runbook (future).
+  - **Backend URL per environment**: staging extension points at Render URL; prod extension points at prod URL. Means two separate Shopify extension versions long-term, OR a single build-time env var. Starting with explicit per-env for clarity.
+  - **Shopify CLI dependency** added to the widget repo's dev workflow (`npm install -g @shopify/cli @shopify/app`). Document in `wisegift-widget/README.md`.
+- Rough effort: 2-3 focused days. Scaffolding + Vite config + first manual deploy + storefront smoke.
+- Follow-ups unblocked:
+  - **First design partner storefront test** — widget rendering on real theme.
+  - **GitHub Actions automation** for `shopify app deploy` on widget main-branch merge.
+  - **App Block variants** for specific placements once pilot data shows the layout question.
+- Made by: Product Owner (advised by claude)
+
+## 2026-10-06 — Staging deploy wrap: full stack verified end-to-end with real catalog + live LLM ranking
+- Context: Over the last 24 hours of this session, the full WiseGift B2B backend went from zero deployed infrastructure to a live staging environment running real Shopify catalog + real OpenAI ranking end-to-end. First pilot blocker (the backend itself) is removed.
+- What landed on staging:
+  - **Neon EU Postgres** (project `wisegift-staging` in Frankfurt, pgvector 0.8.0, PG16). Flyway V1 (13 B2B tables + indexes) + V2 (embedding source hash) ran clean on first boot. All table schemas match `architecture.md` §8.
+  - **Render Web Service + Redis** (both EU Frankfurt). Dockerfile multi-stage (Temurin JDK 21 build → JRE 21 runtime). Blueprint-managed via `render.yaml`. Deploy hook wired through GitHub Actions on `main` push (though staging currently auto-deploys from `develop` branch for faster iteration; align later).
+  - **11 env vars populated** (down from Blueprint's original 12 after PR 7d dropped the Anthropic key). OpenAI key reused for both embeddings and ranking per the vendor swap decision.
+  - **Shopify custom app installed on a dev store** (`wisegift-dev.myshopify.com`). OAuth flow completed, access token encrypted (AES-GCM via PR 2's cipher), scopes `[read_products, read_orders]` granted and stored. Catalog sync ingested 17 products from the Shopify starter catalog. All 17 embedded via OpenAI `text-embedding-3-small`.
+  - **End-to-end widget flow verified**: `POST /widget/v1/session` → JWT returned with 1h TTL + widget config + origin check honored → `POST /widget/v1/recommendations` → GPT-4o-mini ranked 17 candidates in ~2.8s → `servedFrom="live_llm"` → `cost_telemetry` row written with real token counts (gpt-4o-mini-2024-07-18, 705 in / 215 out, 2770ms latency). Repeat call with same intent signature → cache hit at 220ms, no additional LLM spend.
+  - **Semantic correctness**: GPT-4o-mini correctly interpreted budget constraints. For "self, $10-100, ski wax + accessories" it returned the $9.95 Ski Wax at score 1.0 and gave 0.0 scores to two $700+ snowboards. For "gift, partner, birthday, $500-3000, snowboard" it returned the premium $2629 snowboard at 1.0 and premium-tier gradations below.
+- Costs confirmed at pilot scale:
+  - **~$0.0002 per rec call** at GPT-4o-mini pricing with observed token mix. 50k calls/month ≈ **$10/month**. Comfortably below the daily spend cap mechanism in cost telemetry's kill switch infrastructure.
+  - OpenAI embeddings cost for the 17-product dev-store catalog is essentially zero (text-embedding-3-small at ~$0.02 per 1M tokens).
+- Decisions made in-flight (overriding earlier plans):
+  - **PR 7d (vendor swap from Anthropic to OpenAI)** executed earlier the same day; this entry confirms the swap works in production.
+  - **Dockerfile added** (PR 41) because Render Blueprint rejects `runtime: java`. Multi-stage build, no Java-native path.
+  - **Factory refactor** (PR 44) collapsed `RankingClientFactory` to a single `@Qualifier`-driven constructor after Spring picked the wrong ctor in production and failed to boot.
+  - **Shopify scope default fix** (PR 46) dropped `write_theme_extensions` from the Java default — not a valid Shopify scope. Theme app extensions are declared at the Partner app config level, not requested via OAuth.
+  - **Ranking timeout bumped from 2s to 5s** via `WISEGIFT_RANKING_TIMEOUT_MS=5000` Render env var. Observed 2s was too tight for GPT-4o-mini's first-token + generation window at pilot token counts; measured success latency 2.77s on a single-shot call. Retry can still push total to ~10s worst case. **Supersedes the PR 7b "2s hard timeout" placement call** for staging; production value re-evaluated after a week of real traffic.
+- Known tech debt flagged (don't block pilot but worth cleaning):
+  1. **Shopify webhook `"address already taken"` 422** on reinstall — Shopify's old webhook subscriptions persisted across the uninstall gap. Code catches + logs WARN. Fix: either DELETE old webhooks via Shopify API before re-registering, or treat 422 "already taken" as success. Separate small PR.
+  2. **`tenant.active = false`** after install — nothing in the smoke-test flow checks this flag, so it didn't block. But the field exists for a reason; audit the activation flow (admin signup? first-paid-call?) and either wire it or drop the column.
+  3. **Timeout 5s + 1 retry = up to 10s worst case** on ranking. Observed one 9.13s row in cost_telemetry. Pilot phase is OK; revisit if p99 latency pressure grows.
+  4. **No admin UI** — the "admin.shopify.com refused to connect" iframe error merchants will see when clicking the app in Shopify admin is expected because we don't ship an admin dashboard yet. Blocks the merchant from flipping the Sonnet escalation flag, viewing spend, triggering a kill switch. Needed before first paying merchant.
+  5. **Widget bundle not on the storefront yet** — Theme App Extension not deployed. Separate decision entry (above) + PR coming next.
+  6. **DNS**: staging currently at `https://wisegift-backend-staging.onrender.com`. Prod will want a custom domain under `wisegift.app` or similar; Render supports custom domains out of the box.
+  7. **No GDPR webhooks registered** — Shopify requires `customers/data_request`, `customers/redact`, `shop/redact` for App Store listing. Not needed for custom distribution dev app but blocks App Store publication later. Legal/security PR.
+- Follow-ups unblocked (ordered by criticality to first design partner):
+  - **Theme App Extension** (next PR, see 2026-10-06 entry above) — merchant can't see the widget without this.
+  - **PR 8 (order webhook + attribution)** — needed to prove pilot ROI to the design partner.
+  - **Admin dashboard scaffolding** — needed for merchant self-service (kill switch, Sonnet toggle, spend view). Separate `wisegift-admin` repo per CLAUDE.md.
+  - **Tech-debt sprint** before first paying merchant: webhook idempotency fix, tenant.active activation flow, GDPR webhooks, DPA lawyer review.
+- Made by: Product Owner (advised by claude). First staging stack went live over a single session of iterative merging + debugging. Blast radius of each incremental PR (Dockerfile, factory fix, scope default, vendor swap) was small enough that no change held up more than one CI cycle.
+
 ## 2026-10-06 — Backend PR 7d plan: swap ranking vendor from Anthropic to OpenAI (GPT-4o-mini default + GPT-4o escalation)
 - Context: PR 7a-c shipped the live rec engine with Claude Haiku 4.5 as the ranker and Claude Sonnet 4.6 as the per-tenant escalation. During staging deploy prep the PO flagged that we are being asked to onboard a second LLM vendor (Anthropic) with its own billing, API key, and sub-processor entry when we already have an OpenAI dependency (embeddings) with billing active. GPT-4o-mini is ~7x cheaper per token than Haiku 4.5 at the volumes we care about, and ranking quality is comparable at the mini tier for structured rank-this-list tasks. The decision at PR 7b's logging explicitly noted the swap would be reversible via the port-adapter design; this PR exercises that reversibility before any production traffic ever runs through Haiku. Overrides the 2026-10-05 "PR 7b plan" vendor choice; keeps every other locked placement call from that entry.
 - Decision — scope of PR 7d (branch `feature/openai-ranker` off `main` once PR 41 Dockerfile fix is merged — the Docker runtime is a prerequisite for this to reach staging):
