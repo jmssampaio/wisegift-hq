@@ -327,6 +327,52 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-07 — Floating gift-finder button as a second theme app extension block
+- Context: Pilot feedback immediately after the PDP app_block went live: shopper engagement is bottlenecked by the widget only showing when a shopper is already deep in a product page. Shoppers browsing the home page, collection/PLP pages, or using search have no way to invoke the gift-intent hook. The PO proposed a persistent floating button (search-icon style, bottom-right) that opens the widget as a drawer, available across the storefront. Reviewed three options: (A) collection-template app_block only, (B) floating button only, (C) both. Chose B — the floating button covers PLPs AND home AND search AND any `page` template in a single surface. A collection-specific block duplicates coverage once the floating button exists; it stays available as a follow-up if a merchant explicitly asks for inline-section rendering on collections.
+- Decision — scope of the next widget PR (branch `feature/floating-hook` off latest `main` of `wisegift-widget`):
+  1. **Second block file** `extensions/wisegift-widget/blocks/floating_hook.liquid` as an **app_embed_block** (`target: "body"`, no `target: "section"`). Shopify treats it as a global page-level embed instead of a section drag-and-drop. Merchants enable it in the theme editor's **App embeds** panel (restores the panel, which only lists app_embed_block extensions). The existing `wisegift_widget.liquid` PDP block stays.
+  2. **One extension, two blocks.** The CLI already supports this — multiple `.liquid` files under `blocks/` register as separate blocks on the same extension. No new `shopify.extension.toml`, no new `shopify app deploy` cycle beyond the one that always ships.
+  3. **Floating button rendering mode in the widget bundle**: new Preact top-level `<FloatingHook>` component wraps the existing hook + form + recs flow inside a drawer. Reuses `IntentHook` + `IntentForm` + the eventual `Recommendations` components — nothing is duplicated. State machine extends from `"idle" | "self" | "gift" | "submitted"` to also honour a `"closed"` state (drawer collapsed, only the trigger button visible) and `"open"` (drawer visible, widget mounted inside).
+  4. **Trigger button**: fixed-position bottom-right pill, 56px tall × ~160px wide. Default copy "💡 Help me pick" — overridable via a `trigger_copy` block setting (and a backend `widget_config.floating_trigger_copy` column added by a later migration if we need central override; defer that migration to post-pilot). Minimal icon-only variant also available: `trigger_mode` setting = `"icon"` renders a 56px round button with a gift icon only.
+  5. **Drawer**: right-side slide-in panel, 420px wide on desktop (`min(420px, 92vw)` on mobile — full-width on small screens). Content area holds the existing hook/form/recs. Close button top-right of the drawer. Click-outside-to-close enabled. Esc key closes.
+  6. **First-visit nudge**: subtle one-time pulse animation on the trigger button, gated by a `localStorage` key `wisegift.floating.nudged`. Stops after the first visitor interaction (hover/focus/click/dismiss). Dismissible via a tiny × on the pulse ring itself; dismissal persists in localStorage.
+  7. **Placement attribute**: when the drawer opens, mount the widget with `data-placement="floating"` so the backend session resolves the right `copyForPlacement`. Needs a backend addition — new `floating` placement option in the enum shipping with its own default hook copy: `"Not sure what to get them? Let's narrow it down together."`. One-line change to `PlacementHooks.defaultFor(...)`; separate backend PR after the widget-side ships.
+  8. **Scoped CSS**: drawer + button live inside the Shadow DOM boundary so merchant theme CSS cannot bleed in. The trigger button is the only thing outside Shadow DOM (it's an app_embed_block element positioned on the body); it uses defensive high-specificity selectors and `all: initial` as a reset, then applies our styles.
+  9. **Theme editor settings on the new block** (narrow — merchants should feel confident):
+     - `trigger_copy` (text, default `"Help me pick"`, max 32 chars)
+     - `trigger_mode` (select: `"pill"` or `"icon"`, default `"pill"`)
+     - `trigger_position` (select: `"bottom_right"` or `"bottom_left"`, default `"bottom_right"`)
+     - `trigger_background_color` (color, default `#111111`)
+     - `trigger_text_color` (color, default `#ffffff`)
+     - Does NOT expose `hook_copy` or `brand_accent_color` — those stay inherited from the backend (per-placement default via PR 7 pair) and the global widget theme vars. Keeps the floating block easier for a merchant to enable without decisions.
+  10. **Compatibility with the existing PDP block**: a merchant can run both simultaneously. If a shopper on the PDP uses the floating drawer, nothing conflicts — two separate `<wisegift-widget>` instances, two separate session tokens, two separate backend calls. Expected behaviour; no coordination code.
+- Placement calls locked (binding for executor):
+  1. **app_embed_block target: body** for the floating variant. Reinstates the App embeds panel that disappeared when PR 5 swapped the PDP block to a section target.
+  2. **Second block in the same extension** — one `shopify app deploy`, one merchant toggle per surface.
+  3. **Floating is NOT scoped by template.** It appears on every storefront page; the shopper controls whether to open it. Checkout stays excluded via the existing `request.path contains "/checkout"` guard.
+  4. **Trigger button lives outside the Shadow DOM** (unavoidable — it's rendered by the app embed block, not by the widget's own JS). Drawer content inside Shadow DOM. Pragmatic for pilot; revisit if theme CSS collision becomes a problem.
+  5. **Backend adds a `floating` placement** with its own default copy. Lands as a trailing one-line backend PR because the widget renders the same even if backend doesn't have the mapping (falls through to the generic default per PR 7's chain).
+- Rejected alternatives:
+  - **Collection app_block only** — covers PLP but misses home, search, and other pages. Narrower reach.
+  - **Floating + collection app_block** — duplicates coverage on collection pages. Pilot can decide to add the inline collection block if merchants explicitly ask after a few weeks of floating-only.
+  - **Modal (centered dialog) instead of drawer** — more interruptive; blocks scroll; worse mobile UX. Drawer is the current pattern across e-commerce assist widgets (Intercom, Drift, Shop Pay).
+  - **Trigger as a full button on the first viewport, hiding on scroll** — removed shopper agency to re-open; defeats "always available" value.
+  - **No first-visit nudge** — considered. Rejected for pilot because the whole point of the floating affordance is discoverability; shoppers will miss the trigger otherwise. Nudge dismissal persists.
+  - **Push the trigger label through a backend config** so merchants can override from an admin UI we don't yet have. Deferred; theme editor setting covers pilot.
+- Consequences:
+  - Bundle size will grow. Current 9.47 KB gzipped; the drawer + trigger + state machine extension lands another ~3-5 KB. Still well under the 50 KB budget (expected post-change ~13 KB).
+  - **App embeds panel in the theme editor comes back** — PR 5 removed it when we swapped the PDP block to `target: section`. The floating block repopulates it. Merchants enabling the floating variant work entirely in the App embeds panel, not Add-block.
+  - **`floating` placement value** shows up in cost_telemetry rows going forward. Dashboards / spend analytics should learn to filter by placement; `floating` is expected to be the highest-volume once pilot shoppers discover it.
+  - **Session request shape** does not change; `placement` is already a free string field (per PR 7's decision to NOT validate against an enum). Backend tolerates the new value out of the box.
+  - **Z-index concerns**: trigger + drawer need to sit above merchant theme navigation / sticky headers / cart drawer. Setting `z-index: 2147483000` (just below the max 2147483647 reserved for OS tooltips) covers 99.9 % of theme stacking contexts. Documented in the Liquid comment so future PRs don't accidentally drop it.
+- Follow-ups unblocked:
+  - Backend one-liner: add `floating` to `PlacementHooks.defaultFor(...)` with the proposed copy.
+  - Collection-specific app_block if pilot merchants ask (separate PR).
+  - Analytics event: emit `widget.floating.opened` and `.closed` to track discoverability vs engagement.
+  - Admin dashboard "override floating trigger copy" when the admin repo exists.
+- Rough effort: 1 day widget work. Smaller than the PDP app_block swap because it reuses all the hook/form components; new surface is just the drawer wrapper + the Liquid embed block.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-07 — Per-placement hook copy (backend defaults + merchant overrides)
 - Context: PR 5 (widget-side) shipped `app_block` scoped to the PDP, so merchants can drag the widget next to the Add to Cart button. Pilot feedback immediately raised the question of hook copy: a single global prompt ("Are you looking for something for you, or for someone else?") reads great on a home hero and awkward on a PDP where the shopper is already looking at a specific product. The right default copy depends on which page the widget sits on. Rather than require merchants to configure hook copy per block, backend provides a sensible per-placement default and merchants only override when they have brand voice reasons to.
 - Decision — scope of PR (backend first, widget follows):
