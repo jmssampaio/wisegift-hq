@@ -327,6 +327,40 @@
   - Contract template (legal/DPA) should mention the 5-business-day support-SLA so it is not a surprise ask. Flag to `security-and-privacy` for the DPA draft pass.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-07 — Per-placement hook copy (backend defaults + merchant overrides)
+- Context: PR 5 (widget-side) shipped `app_block` scoped to the PDP, so merchants can drag the widget next to the Add to Cart button. Pilot feedback immediately raised the question of hook copy: a single global prompt ("Are you looking for something for you, or for someone else?") reads great on a home hero and awkward on a PDP where the shopper is already looking at a specific product. The right default copy depends on which page the widget sits on. Rather than require merchants to configure hook copy per block, backend provides a sensible per-placement default and merchants only override when they have brand voice reasons to.
+- Decision — scope of PR (backend first, widget follows):
+  1. **New `widget_config.placement_hooks` JSONB column** (Flyway V3). Shape: `{"home_hero": "...", "pdp_slot": "...", "collection_header": "...", "gift_finder": "..."}`. Keys are placement slugs. All keys optional — only populated entries override the per-placement backend default. Column `NOT NULL DEFAULT '{}'::jsonb`.
+  2. **Precedence chain for the hook text** returned by `POST /widget/v1/session`:
+     a. Theme-block setting (merchant-set in Shopify admin via the `hook_copy` block setting) → wins at the browser via `data-hook-copy` attribute, resolved client-side. Backend never sees it.
+     b. `widget_config.placement_hooks[placement]` (merchant central override via future admin API — slot exists, not wired to admin UI yet)
+     c. `widget_config.hook_copy` (merchant global override, what today's single hook does)
+     d. Backend code-level default for the placement
+     e. Hardcoded generic fallback ("Looking for a gift, or something for yourself?")
+  3. **Session response DTO extension**: add `copyForPlacement` string field alongside the existing `copy`. `copy` keeps its current semantics for backward compatibility (returns the resolved global hook — `widget_config.hook_copy` or null); `copyForPlacement` resolves the full chain for the session's placement. Widget prefers `copyForPlacement` and falls back to `copy` for widgets built against older server versions.
+  4. **Four placements supported** per the frozen MVP scope + the per-placement enum in `widget_config.placements_enabled`: `home_hero`, `pdp_slot`, `collection_header`, `gift_finder`. Any other value falls through to the generic default — no 500.
+  5. **Backend code-level defaults** (final because they ship in the app, hardcoded):
+     - `home_hero`: "Looking for a gift, or something for yourself?"
+     - `pdp_slot`: "Thinking about this as a gift? Let's find the right pick."
+     - `collection_header`: "Not sure which one? We can match a gift to the person."
+     - `gift_finder`: "Tell us about them — we'll find something perfect."
+     Living in a `PlacementHooks.defaultFor(String placement)` static method inside the tenant module. Simple constants map; refactoring to tenant-vertical-specific defaults is a later concern.
+- Rejected alternatives:
+  - **Theme-block setting overrides ALL backend configs by design**: at pilot. Merchant has final say — matches how Shopify embeds behave generally. Flip to backend-wins once we have an admin dashboard that merchants trust more than the theme editor.
+  - **Separate hook per placement in `widget_config` as four discrete columns**: rejected. JSONB keeps the schema stable when we add placements. Querying individual keys stays simple with Postgres JSONB operators.
+  - **Vertical-specific defaults** (fashion vs electronics vs home verticals get different hooks). Deferred: pilot has one vertical (dev store), evaluation data too thin to differentiate. Easy to add later by making `defaultFor(placement, vertical)`.
+  - **Admin API endpoint for setting placement_hooks**: deferred to admin dashboard PR. Column is populated via direct DB access until then; pilot merchants call support if they need an override.
+- Consequences:
+  - **One migration (V3)** touches staging on next deploy. Non-destructive (NOT NULL with default). Backward compatible with existing widget_config rows.
+  - **Session response wire shape grows one field**: `copyForPlacement`. Old widgets ignore unknown fields (Jackson default), so no coordinated widget redeploy required to roll the backend.
+  - **Widget needs a client-side priority tweak**: `data-hook-copy` (block setting) still wins → falls through to `copyForPlacement` → falls through to `copy` → hardcoded default. Backward compatible with the current attribute-reading path.
+  - **Theme-block default copy for `hook_copy`** should probably become `""` (empty string) rather than the current `"Are you looking for..."` default, so an unset block setting correctly delegates to backend. Minor widget-side PR update.
+- Follow-ups unblocked:
+  - Admin dashboard "Hook copy" screen (future admin repo PR) edits `widget_config.placement_hooks` + `hook_copy` directly.
+  - Vertical-specific defaults when evaluation data justifies.
+  - A/B hook variants once we have an evaluation harness.
+- Made by: Product Owner (advised by claude)
+
 ## 2026-10-06 — Shopify Theme App Extension plan (widget on storefront)
 - Context: Staging deploy wrap confirmed the backend serves recommendations end-to-end to a Shopify dev store (merchant `wisegift-dev.myshopify.com`), but the widget bundle itself only exists as a hostable JS artifact in `wisegift-widget` — nothing yet makes it render inside the merchant's theme. Shopify's native path to inject app-owned UI into a merchant's storefront is a **Theme App Extension**: a bundle of Liquid templates + static assets registered against the Shopify app, which merchants enable through the theme editor ("Add app embed" / "Add block"). Blocks the first pilot — a merchant can't see the widget without this.
 - Decision — scope of the first Theme App Extension (branch `feature/theme-extension` off latest `main` of `wisegift-widget`):
