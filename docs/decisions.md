@@ -1197,6 +1197,48 @@
   - The API contracts in `architecture.md` §9 and `spec.md` recommendation/event API sections now expose `platform_product_id` in request/response bodies. Widget code (not yet written) will read this field name from day one; there is no pre-existing widget to migrate.
 - Made by: Product Owner (advised by claude)
 
+## 2026-10-09 — Self-intent + budget alone now counts as "real intent" (revision of PR 7 plan point 9)
+- Context: Pilot reproducer — widget sent `intentMode="self"`, `placement="floating"`, `intent={budget_min:100, budget_max:200}` and got zero recommendations. Trace showed the `RealIntentCheck` guardrail (`decisions.md` 2026-10-04 PR 7 plan point 9) short-circuited the call to the pgvector fallback path with `served_from="precomputed"` because budget was treated as "not enough signal". But that's exactly the shape of request a shopper produces when they pick "For me" + a budget range in the widget's progressive-disclosure form — the most common self-intent entry path. The guardrail was turning the most common self-intent flow into a degraded response.
+- Decision:
+  1. **`RealIntentCheck.hasRealIntent` passes when `intentMode="self"` AND (`budgetMin != null` OR `budgetMax != null`).** The shopper has committed to buying for themselves at a specific price point — enough signal for the LLM to rank by category + fit on the retrieved candidates. The LLM doesn't need a recipient profile when there's no recipient.
+  2. **Gift-intent with budget alone still fails the guardrail.** "For whom" is undefined without at least relationship/occasion/interests; a gift ranker call on budget-only would spend tokens producing noise. Conservative at pilot; revisit if engagement data from the first merchant shows gift+budget-only is also enough signal to justify the LLM cost.
+  3. **Fallback label unchanged** for the gift-with-budget-only case (`served_from="precomputed"`) — guardrail trip, not an engine failure, so analytics treat it the same as before.
+- Rejected alternatives:
+  - **Pass for both self and gift when budget is set.** Risks spending LLM tokens on gift calls with weak signal; the recipient-profile fields are the entire reason the ranker exists for gift intent. Save the token budget for actionable requests.
+  - **Pass unconditionally if budget is set.** Same problem plus loses the "self vs gift" semantic distinction that drives downstream metrics.
+  - **Lower the bar further** (e.g. intentMode alone counts as real intent). Defeats the guardrail's purpose — bare PDP views with no form submission would then always hit the ranker. The 2026-10-04 PR 7 plan point 9 reasoning still holds for the no-form case.
+- Consequences:
+  - **Self-intent widget sessions with a budget range now hit the live-LLM path** (`served_from="live_llm"`) instead of the precomputed-labelled fallback. First-order impact: real LLM cost per self+budget session where before there was none. Mitigated by the fact that these are now surfacing recs (the point) and the per-tenant usage cap + session rate-limit guardrails remain in place.
+  - **`cost_telemetry` will show an uptick in self-intent LLM calls** once the fix is live on staging. Dashboards should start seeing `intent_mode="self"` rows with budget keys where previously it was mostly empty. Expected, not an anomaly.
+  - **The LLM ranker now sees self+budget requests more often**; its prompt (RankingPromptBuilder) already includes budget as context so no prompt tuning needed.
+  - **`RealIntentCheckTest`** grows: 3 new self+budget cases (both bounds, min-only, max-only) + the pre-existing `budgetOnly_isNotRealIntent` renamed to `giftBudgetOnly_isNotRealIntent` to make the gift-vs-self asymmetry explicit.
+- Follow-ups unblocked:
+  - After one pilot cycle: revisit gift+budget-only based on engagement data. If a shopper puts in a budget but no "for whom" signal and the LLM still produces useful recs, extend the pass to gift mode.
+  - Analytics: tag `cost_telemetry` rows with intent-field sparsity (how many fields set) so we can see whether thin-intent LLM calls underperform rich-intent ones.
+- Shipped: PR [#56](https://github.com/jmssampaio/wisegift-backend/pull/56) — bundles this fix with the budget-filter overlap-semantics fix (next entry) since both are root causes of the same pilot bug.
+- Made by: Product Owner (advised by claude)
 
-
-
+## 2026-10-09 — Budget filter uses overlap semantics instead of strict band on `price_min` (revision of 2026-10-08)
+- Context: Companion root cause to the pilot "self+budget returns zero recs" bug. PR 52 (`decisions.md` 2026-10-08) added a hard budget filter at pgvector retrieval using `price_min BETWEEN budgetMin AND budgetMax`. `price_min` is the cheapest variant's price. For a multi-variant product with variants $75/$150/$200 and a shopper budget $100-$200, `price_min=$75` fails `>= 100` and the row never reaches the LLM ranker — even though two of its variants are perfectly in-budget. Single-price products were unaffected; multi-variant products were systematically under-surfaced. The 2026-10-08 decision explicitly rejected softer alternatives in favour of the strict band for simplicity; this revision concludes that call was too aggressive once we considered multi-variant products properly.
+- Decision:
+  1. **Switch to overlap semantics.** A product passes if any of its variants could sit within the band. SQL (nulls on either bound still skip the respective predicate):
+     ```sql
+     AND price_min <= ?                        -- ceiling: at least one variant affordable
+     AND COALESCE(price_max, price_min) >= ?   -- floor: at least one variant reaches budgetMin
+     ```
+  2. **`COALESCE(price_max, price_min)`** handles single-price rows (`price_max IS NULL`) by falling back to `price_min` — so their behaviour under the floor check is unchanged. Only multi-variant products with `price_max` set see different inclusion behaviour.
+  3. **Semantic rationale.** "Shopper budget $100-$200" interpreted as "at least one of your variants fits in this band" matches shopper intent better than "the cheapest variant must sit in the band exactly". A $75-$500 product has a $150 variant the shopper can buy — excluding it was wrong.
+  4. **Zero-result empty state unchanged.** If no products overlap the band at all, the SQL still returns empty and `RecommendationSlate` still surfaces an empty slate with the normal `served_from` label. The widget's "no matches, change my answers" prompt still fires. We don't auto-widen the band silently.
+  5. **`NearestProductBudgetFilterIT`** gains a multi-variant seed ($50-$500) and a dedicated `bothBounds_overlapIncludesMultiVariantSpanningBand` test that would have caught the pilot bug. All seven pre-existing assertions still pass under the new semantics (confirming no regression on single-price rows).
+- Rejected alternatives:
+  - **Ceiling only** (`price_min <= budgetMax`, drop the lower bound). Simplest and matches "I can afford up to X" shopper intent, but discards the shopper's lower-bound signal — a shopper picking "$100-$200" doesn't want a $10 trinket surfaced. Overlap preserves both bounds without the strict-band exclusion bug.
+  - **Keep the strict band** and reword the widget's budget-picker UI to say "entry-price between X and Y". UI tax for a less useful filter; also would still miss the usual shopper intent on multi-variant products.
+  - **Store a derived `has_variant_in_band(min, max)` boolean per product.** Over-engineered for MVP; the `COALESCE` + two predicates already uses existing columns and the pgvector query planner handles it fine.
+  - **Add `price_max` as a separate second-stage filter after the LLM ranks.** Doubles the retrieval path complexity for no measurable gain; the SQL layer should be the single source of truth for "what's affordable".
+- Consequences:
+  - **Multi-variant products with wide price ranges will show up in budget-filtered recs where before they did not.** Expected uplift in result-set sizes for merchants whose catalog has multi-variant products (common in apparel, jewellery, home goods).
+  - **Empty-result rate drops** on the self+budget flow. Combined with the `RealIntentCheck` fix above, the self+budget flow is now the "LLM is working as intended" path.
+  - **Pricing-page copy** in the admin (future) should describe the budget filter honestly: "shows products where at least one variant fits your range". `product-analyst` to pick up when the admin screen lands.
+  - **No schema migration required.** `price_max` column already exists on `tenant_products` (`architecture.md` §8).
+- Shipped: PR [#56](https://github.com/jmssampaio/wisegift-backend/pull/56) — bundled with the `RealIntentCheck` fix above.
+- Made by: Product Owner (advised by claude)
