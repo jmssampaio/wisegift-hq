@@ -1242,3 +1242,20 @@
   - **No schema migration required.** `price_max` column already exists on `tenant_products` (`architecture.md` §8).
 - Shipped: PR [#56](https://github.com/jmssampaio/wisegift-backend/pull/56) — bundled with the `RealIntentCheck` fix above.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-12 — MVP build plan: remaining work sequenced into PRs across 4 milestones
+- Context: PO asked for a "what's missing for MVP" summary. A full gap analysis ran across `wisegift-backend` + `wisegift-widget` (read-only, agent-assisted) against `docs/product/spec.md`. Finding: the staging stack already runs the widget → recommendation flow end-to-end (real catalog, embeddings, live GPT-4o-mini ranking, cost telemetry, cache, manual kill switch), but three gap clusters remain. This entry logs the resulting sequenced build plan; the plan itself lives at `docs/engineering/mvp-build-plan.md` (single source of truth — this entry is the pointer + rationale, not a duplicate).
+- The three gap clusters:
+  1. **Attribution spine** — half-built on both sides. Backend: `orders/create` receiver unbuilt (the never-landed "PR 8"); `orders_attributed` + `precomputed_recs` tables exist with zero writers; `AnalyticsQueryService` is a zeros-returning stub; no 7-day event→order join. Widget: no `localStorage` session UUID, no placebo rendering for holdout, no `wg_session` marker on click URLs, event pipeline never POSTs to `/widget/v1/events` (backend endpoint is live but unconsumed), no IntersectionObserver lazy-load. Without this there is no revenue-lift proof — the whole merchant value proposition.
+  2. **Merchant admin dashboard** — repo not created; 100% of the admin surface unbuilt. Merchants currently hit "iframe refused to connect" opening the app in Shopify admin. Backend admin APIs mostly absent too (widget-config CRUD, theming/placements write, analytics, Shopify Billing entirely absent).
+  3. **Compliance / data-lifecycle** — 30-day hard-purge job missing (soft-delete works), DPA lawyer review outstanding, GDPR mandatory webhooks + App Store listing (public-path only).
+- Decision — 4 milestones, PR-sequenced (full table in the plan doc):
+  - **M1 Attribution spine** (5 PRs): backend `orders/create` receiver → 7-day join + analytics KPI service; widget session identity + placebo → event pipeline → `wg_session` marker + IntersectionObserver. Backend and widget lanes run in parallel.
+  - **M2 Admin dashboard** (7 PRs): backend admin config APIs ‖ new `wisegift-admin` Next.js repo scaffold → onboarding wizard, config+theming, placements+catalog-sync, analytics, billing.
+  - **M3 Compliance** (3 PRs + 1 non-code): hard-purge, GDPR webhooks, ops hardening; DPA lawyer review (external, start early).
+  - **M4 Widget polish** (5 PRs): EN/ES/PT i18n, home-hero + gift-finder blocks, precomputed cold-recs job, graceful fallback, configurable rec count.
+- First-pilot-ready gate: **M1 complete + M2·3/4/5/6 + M3·1 + M3·4.** Billing (M2·7), GDPR webhooks (M3·2), App Store listing, and all of M4 trail into the pilot window (a custom-app pilot needs neither the public listing nor the GDPR webhooks).
+- Non-PR precondition logged separately: **ranker spec reconciliation** — `spec.md` still names Haiku 4.5; implementation is GPT-4o-mini (PR 7d swap). Fix the spec text before M1 starts.
+- Each milestone PR gets its own detailed "PR N plan" entry here when picked up for build, matching the existing backend-PR-plan format.
+- Build kickoff: Wave 1 started same session — M1·1 (backend `orders/create` receiver) + M1·3 (widget session identity) launched in parallel.
+- Made by: Product Owner (advised by claude)
