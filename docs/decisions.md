@@ -1259,3 +1259,11 @@
 - Each milestone PR gets its own detailed "PR N plan" entry here when picked up for build, matching the existing backend-PR-plan format.
 - Build kickoff: Wave 1 started same session — M1·1 (backend `orders/create` receiver) + M1·3 (widget session identity) launched in parallel.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-13 — Widget repo uses `main` as its integration branch (not `develop`)
+- Context: The HQ `CLAUDE.md` working rule says "All code changes target `develop` via a `feature/*` branch and PR. Never open a PR against `main`." That rule was written around the backend's gitflow (`develop` → `main`). When opening the first MVP-build-plan widget PRs (M1·3), `gh pr create --base develop` failed: the `wisegift-widget` repo has **no `develop` branch** on the remote (or locally), its default branch is `main`, and all 11 prior widget PRs (#1–#11) merged directly to `main`.
+- Decision: **The widget repo's integration branch is `main`.** Widget `feature/*` PRs target `main`; the merge to `main` is the human-gated deploy gate (consistent with the HQ rule's intent that merges are human-gated, just without the intermediate `develop`). The backend keeps its `develop` → `main` gitflow unchanged. The "never PR against `main`" rule in `CLAUDE.md` is therefore **backend-specific**, not universal.
+- Rationale: Matching each repo's established, actually-used convention beats inventing a `develop` branch mid-stream for the widget (which would also need new CI/deploy wiring). The widget is a smaller, newer surface scaffolded 2026-09-29 and never adopted gitflow.
+- Rejected: creating a `develop` branch in the widget repo to force-align with the backend — rejected as convention-churn with no benefit at MVP scale; revisit only if the widget's release cadence ever needs a staging/production split like the backend has.
+- Follow-up: the HQ `CLAUDE.md` branch rule should be reworded to scope "target `develop`" to the backend and name `main` as the widget's trunk, so future sessions don't hit this. Flagged to PO (not auto-edited — CLAUDE.md is PO-owned).
+- Made by: Product Owner (decided via prompt; advised by claude)
