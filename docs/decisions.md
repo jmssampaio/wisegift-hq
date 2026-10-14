@@ -1291,3 +1291,18 @@
   - `backend-engineer`: M3·1 scope gains `orders_attributed` 18-month purge.
   - Open (not decided here): raw `events` retention + daily KPI aggregation — to be proposed with M1·2 / M3·1.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-14 — Shopify webhook/scope findings from M1·1 staging verification
+- Context: Verifying M1·1 on staging (an order created in `wisegift-dev` never reached `orders_attributed`) uncovered a chain of Shopify integration issues. `orders/create` ingest is now verified end-to-end on staging (order `6772970553403` persisted with `session_id = NULL`, PII-free `line_items`, ~4 s webhook latency).
+- Findings + actions:
+  1. **Webhook registration aborted on the first error.** All topics were registered in one try/catch, so on re-auth the 422 "already been taken" from `app/uninstalled` skipped every later topic, `orders/create` included. Fixed in backend PR #64 (one try per topic; already-taken 422 treated as subscribed). Merged.
+  2. **`orders/create` needs Shopify Protected Customer Data access (level 1).** Shopify returns 403 without it, even when `read_orders` is granted. The PO configured it for the WiseGift Staging app. **We request level 1 only.** No level-2 fields (name/email/phone/address) are read; they are dropped at ingest. `security-and-privacy` to reuse this in the DPA + App Store data-protection questionnaire. In the new Dev Dashboard the PCD request path is not obvious (Shopify docs still describe the Partner Dashboard flow), so document the exact steps when setting up the production app.
+  3. **`inventory_levels/update` needs `read_inventory`.** It was failing with 422 since PR 4. With Shopify-managed install (`use_legacy_install_flow = false`), **granted scopes come from `shopify.app.toml` (widget repo), not from the backend's requested list.** Fixed in widget PR #16 (merged; released as app version `wisegift-staging-11`) and backend PR #65 (open). Existing installs must approve the new scope.
+  4. **Deploying the app needs a widget build first.** `extensions/wisegift-widget/assets/widget.js` is git-ignored and produced by `npm run build` (postbuild copy). Running `shopify app deploy` from a fresh checkout without building would release the theme extension **without the widget bundle**. `devops-expert` to put this in the runbook / CI.
+- Follow-ups (not yet scheduled):
+  - **Inventory webhook doesn't update stock.** `onInventoryLevelsUpdate` matches `inventory_item_id` against `platform_variant_id` (different ID spaces). Persist `inventory_item_id` per variant (Flyway + `(tenant_id, inventory_item_id)` index), do a tenant-scoped lookup, add a two-tenant isolation test, and decide how to aggregate stock across locations. The handler also loads the full tenant catalog per webhook; fix it in the same PR. Owner: `backend-engineer`.
+  - **Admin API pinned to `2024-10`**, past Shopify's support window, so requests are served by the oldest supported version. Bump to `2026-10` (matching the TOML webhooks version); plan REST → GraphQL before App Store submission. Owner: `backend-engineer`; CI end-of-support reminder: `devops-expert`.
+  - **Nothing compares granted vs requested scopes after token exchange.** Add a WARN tagged with the tenant.
+  - **Reconcile webhooks via `GET /webhooks.json`**, so existing tenants pick up new topics or callback-address changes without a re-auth.
+  - **Install flow ran 3× concurrently** on one re-auth (the embedded app loads `application_url` repeatedly), which triggered duplicate catalog syncs. Make install/sync idempotent under concurrency.
+- Made by: Product Owner (advised by claude)
