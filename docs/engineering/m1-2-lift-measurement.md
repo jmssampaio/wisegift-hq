@@ -370,15 +370,15 @@ Ordered by impact on measurement. **G1–G3 block meaningful lift numbers**. M1�
 
 | # | Decision | My recommendation |
 |---|---|---|
-| **D1** | Add-to-cart tile: not measurable at MVP (no cart ingestion; no holdout counterfactual). | Replace with exposed-only **Rec click-through** + **Rec purchase rate**, without a lift claim. Spec edit. |
-| **D2** | Headline population for conversion and RPS: `triggered` (intent submitted) vs `shown` (spec literal) vs `engaged` (decisions wording). | `triggered` as headline, `shown` as secondary store-level view in the same response. |
-| **D3** | 7-day window anchor: spec says last `product_clicked`. | Last **symmetric** widget event (`shown`/`engaged`/`intent_submitted`), plus "order after first trigger". Spec + architecture edit. |
-| **D4** | 90/10 split power: 5k exposed sessions detects only ≈ +40–90% relative lift. | Keep 90/10 as the default but tell pilots honestly ("readout at N sessions"). Offer a pilot opt-in 80/20 for faster proof. Pre-registered readout for case studies. |
-| **D5** | Raw `events` retention + daily aggregate. | 120 days raw `events`/`sessions`; 18 months anonymous `analytics_kpi_daily`; consider nulling `orders_attributed.session_id` after 120 days. |
-| **D6** | Placebo UX (currently a "no matches" message). | A neutral collapsed slot or the merchant's static fallback before any pilot readout. |
-| **D7** | Show significant **negative** lift as red? (Spec only has green/grey.) | Yes. Honesty is the product. |
-| **D8** | Revenue definition: `total_price` (gross, incl. shipping/tax, pre-refund). | Accept for MVP and label it. Revisit with `subtotal_price` if merchants ask. |
-| **D9** | Day boundaries: UTC vs shop timezone. | UTC at MVP (the shop tz is not stored). Add `iana_timezone` from `shop/update` later. |
+| **D1** ✅ decided 2026-10-14 (see decisions.md) | Add-to-cart tile: not measurable at MVP (no cart ingestion; no holdout counterfactual). | Replace with exposed-only **Rec click-through** + **Rec purchase rate**, without a lift claim. Spec edit. |
+| **D2** ✅ decided 2026-10-14 (see decisions.md) | Headline population for conversion and RPS: `triggered` (intent submitted) vs `shown` (spec literal) vs `engaged` (decisions wording). | `triggered` as headline, `shown` as secondary store-level view in the same response. |
+| **D3** ✅ decided 2026-10-14 (see decisions.md) | 7-day window anchor: spec says last `product_clicked`. | Last **symmetric** widget event (`shown`/`engaged`/`intent_submitted`), plus "order after first trigger". Spec + architecture edit. |
+| **D4** ✅ decided 2026-10-14 (see decisions.md) | 90/10 split power: 5k exposed sessions detects only ≈ +40–90% relative lift. | Keep 90/10 as the default but tell pilots honestly ("readout at N sessions"). Offer a pilot opt-in 80/20 for faster proof. Pre-registered readout for case studies. |
+| **D5** ✅ decided 2026-10-14 (see decisions.md) | Raw `events` retention + daily aggregate. | 120 days raw `events`/`sessions`; 18 months anonymous `analytics_kpi_daily`; consider nulling `orders_attributed.session_id` after 120 days. |
+| **D6** ✅ decided 2026-10-14 (see decisions.md) | Placebo UX (currently a "no matches" message). | A neutral collapsed slot or the merchant's static fallback before any pilot readout. |
+| **D7** ✅ decided 2026-10-14 (see decisions.md) | Show significant **negative** lift as red? (Spec only has green/grey.) | Yes. Honesty is the product. |
+| **D8** ✅ decided 2026-10-14 (see decisions.md) | Revenue definition: `total_price` (gross, incl. shipping/tax, pre-refund). | Accept for MVP and label it. Revisit with `subtotal_price` if merchants ask. |
+| **D9** ✅ decided 2026-10-14 (see decisions.md) | Day boundaries: UTC vs shop timezone. | UTC at MVP (the shop tz is not stored). Add `iana_timezone` from `shop/update` later. |
 
 ---
 

@@ -1327,3 +1327,61 @@
   (c) keep cookies and accept degraded embedded behaviour (not recommended).
   Inputs needed: `security-and-privacy` (token verification, tenant binding, CSRF implications), `backend-engineer` (filter + tenant resolution), `frontend-engineer` (App Bridge `idToken()` in the API client), `product-analyst` (standalone admin login: is it needed at MVP?). Must be decided before M2·3 onboarding ships to a pilot.
 - Made by: Product Owner (advised by claude); the auth-model item stays open for a PO decision.
+
+## 2026-10-14 — `_wg_session` order join: security review outcome; G5 consent gating is a pilot gate
+- Context: widget PR #17 writes the shopper's widget session id into a Shopify cart attribute, so it reaches the order's `note_attributes` (attribution, gap G1). A `security-and-privacy` review found that this creates a join key between the merchant's identified customer and the widget history. That changes the GDPR/ePrivacy analysis, and the DPA §6.4 ("no join key") and consent-position drafts would become inaccurate.
+- Decision:
+  1. **Merge PR #17 after the R1–R4 hardening.**
+     - R1: rename the attribute to `_wg_session`. The backend accepts `_wg_session` first, then the legacy `wg_session`.
+     - R2: strict v4 UUID validation, in both the widget and the backend.
+     - R3: the cart POST stays on the storefront origin (`Shopify.routes.root` is validated).
+     - R4: no cart write when localStorage is blocked.
+     - Merging is allowed because no pilot has the staging app installed on a live storefront yet.
+  2. **G5 consent gating is now a hard gate before any pilot storefront.**
+     - Use the Shopify Customer Privacy API (`analyticsProcessingAllowed()`). Without consent: no session id, no storage, no cart attribute, no events.
+     - New tenant flag `tenants.consent_mode_required` (default `true`, fail closed), exposed to the widget as `consentModeRequired`.
+     - Separate widget and backend PRs.
+  3. **Legal drafts updated to match:** DPA §6/§12/§14, consent position, sub-processors.
+     - Includes a correction: OpenAI (GPT-4o-mini ranker) receives shopper intent payloads, including free text.
+     - These are drafts only. PO review first, then attorney review before any DPA goes to a merchant.
+- Follow-ups:
+  - M3·2 GDPR webhooks (`customers/redact`, `customers/data_request`) must also cover the sessions and events linked through order ids.
+  - `architecture.md` §7 names the localStorage key `wg_session_id`; the code uses `wg_session`.
+  - The HQ `CLAUDE.md` points to `docs/legal/legal.md`, which does not exist. The real files are `dpa-template.md`, `consent-position.md` and `sub-processors.md` (CLAUDE.md is PO-owned; flagged).
+- Made by: Product Owner (advised by claude, security-and-privacy review)
+
+## 2026-10-14 — M1·2 D4: holdout split stays 90/10 by default; design partners may opt in to 80/20
+- Context: `docs/engineering/m1-2-lift-measurement.md` §5.4. At 90/10, 5,000 exposed triggered sessions detect only about +38% to +88% relative conversion lift, depending on baseline. Detecting +10% needs about 165k–280k triggered sessions. The 10% holdout dominates the variance.
+- Decision:
+  1. **Default split stays 90/10** for every tenant.
+  2. **Design partners may opt in to 80/20** (holdout 20%) for faster proof. It needs about 44% fewer sessions for the same MDE (variance factor 1/0.8 + 1/0.2 = 6.25 vs 11.1). This is an explicit, recorded merchant choice, and they are told that 20% of triggered traffic gets the placebo.
+  3. **Be honest with pilots:** the dashboard shows "readout at N sessions" and the MDE at current n (§5.4).
+  4. **Case-study claims come only from the pre-registered readout** (§5.5), never from the live tile.
+- Engineering implications (M1·2 / backlog):
+  - `HoldoutAssigner` currently hard-codes `HOLDOUT_PERCENT = 10`. The opt-in needs a per-tenant `tenants.holdout_percent` (allowed values 10 or 20, default 10), passed to the assigner by both callers: the session bootstrap and the `widget_shown` sticky assignment.
+  - Persisted `sessions.is_holdout` stays sticky. A split change applies only to sessions first shown after the change.
+  - Record the effective-from timestamp of every split change (e.g. a `tenant_holdout_changes` audit row). Lift analysis must segment or weight by split period, so it doesn't pool cohorts with different allocation ratios, which would bias the comparison.
+  - A session bootstrapped before a change but first shown after it can be shown under one bucket and persisted under another. This is acceptable at pilot scale; note it in the readout.
+- Made by: Product Owner (advised by claude, recommendations-specialist proposal)
+
+## 2026-10-14 — M1·2 lift measurement: D1–D3 and D5–D9 accepted as proposed
+- Context: the open decisions in `docs/engineering/m1-2-lift-measurement.md` §10 (D4 is logged separately above). The PO accepted the recommendations-specialist proposal on each one.
+- Decision:
+  - **D1, add-to-cart tile:** not measurable at MVP (no cart ingestion and no holdout counterfactual). It is replaced by exposed-only **rec click-through** and **rec purchase rate**, shown as absolute rates without any lift claim. `carts/update` ingestion is not built.
+  - **D2, headline population:** conversion and RPS lift are reported on **`triggered`** sessions (intent submitted). **`shown`** is returned as the secondary, store-level view in the same response.
+  - **D3, attribution anchor:** the 7-day window anchors on the **last symmetric widget event** (`widget_shown` / `engaged` / `intent_submitted`), and the order must come after the first trigger. Anchoring on `product_clicked` is rejected: holdout cannot produce clicks, so it would inflate lift without bound.
+  - **D5, retention:**
+    - raw `events` and `sessions` are kept 120 days;
+    - `orders_attributed.session_id` is nulled at 120 days, which breaks the customer↔widget link;
+    - the anonymous `analytics_kpi_daily` aggregate is kept 18 months;
+    - order rows keep their 18-month retention.
+    - Purge job: M3·1. DPA §14.6 draft updated accordingly.
+  - **D6, placebo:** holdout shoppers see a **neutral collapsed rec slot** with no "no matches" copy, replacing the current `RecommendationEmpty` state. This is a widget change, required before the first pilot readout.
+  - **D7:** a significant **negative** lift renders **red** (green / red / grey / grey).
+  - **D8, revenue:** `total_price` (gross: shipping and tax included, before refunds), labelled as such in the UI and CSV. Revisit with `subtotal_price` if merchants ask.
+  - **D9, day boundaries:** **UTC** at MVP. Add `iana_timezone` from `shop/update` later.
+- Follow-ups:
+  - **D1–D3 doc edits:** fold the outcomes into `spec.md` and `architecture.md` (G11). Owner: `product-analyst`.
+  - **D6 widget PR.** Owner: `frontend-engineer`.
+  - **D7 dashboard rendering**, in M2·6.
+- Made by: Product Owner (advised by claude, recommendations-specialist proposal)
