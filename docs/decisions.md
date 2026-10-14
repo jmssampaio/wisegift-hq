@@ -1278,3 +1278,16 @@
   3. Write a runbook documenting the real staging deploy procedure.
 - Note: promotion PR #60 (`develop → main`) opened this session was unnecessary for the staging deploy — harmless (`main` advanced with the same #58/#59 already in `develop`), but a direct symptom of the config drift above.
 - Made by: claude (flagged to PO, who approved logging); devops-expert to action.
+
+## 2026-10-14 — Order data: keep all orders (attributed + unattributed), 18-month retention
+- Context: PO asked whether storing every merchant order in `orders_attributed` (M1·1 persists all `orders/create` payloads, unattributed ones with `session_id = NULL`) is a storage-cost or merchant-acceptance problem. Rows are PII-free (order id, line items, total, currency, timestamps; ~0.5 KB/row incl. indexes, rough estimate) — ~60 MB/year for a 10k-orders/month merchant, ~3 GB/year at 50 such merchants. Cost is negligible at MVP scale. The bigger storage driver will be the `events` table (several events per widget session), not orders. Data-minimisation alternative considered: persist only orders carrying a `wg_session` marker.
+- Decision:
+  1. **Keep storing all orders**, attributed and unattributed, as M1·1 does today. Unattributed rows remain available for merchant-wide baselines.
+  2. **Retention: 18 months** from order `created_at` for `orders_attributed` rows, then hard-delete. 18 months covers year-over-year comparison plus a buffer.
+  3. Retention enforcement lands with the M3·1 hard-purge job (same scheduled-purge mechanism).
+- Rejected: **Store only `wg_session`-marked orders.** Stronger data-minimisation story and smaller footprint, but PO preferred keeping baselines while cost is low; revisit if a merchant/DPA negotiation demands it.
+- Consequences / follow-ups:
+  - `security-and-privacy`: reflect the 18-month order retention in the DPA draft + sub-processor/data-inventory list (`docs/legal/legal.md`); `session_id` is pseudonymous personal data under GDPR, so the retention period must be stated.
+  - `backend-engineer`: M3·1 scope gains `orders_attributed` 18-month purge.
+  - Open (not decided here): raw `events` retention + daily KPI aggregation — to be proposed with M1·2 / M3·1.
+- Made by: Product Owner (advised by claude)
