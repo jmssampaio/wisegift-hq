@@ -1306,3 +1306,24 @@
   - **Reconcile webhooks via `GET /webhooks.json`**, so existing tenants pick up new topics or callback-address changes without a re-auth.
   - **Install flow ran 3× concurrently** on one re-auth (the embedded app loads `application_url` repeatedly), which triggered duplicate catalog syncs. Make install/sync idempotent under concurrency.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-14 — Admin repo (`wisegift-admin`) uses `main` as its integration branch; one PR per milestone item
+- Context: `wisegift-admin` (scaffolded in M2·2) has only a `main` branch, like `wisegift-widget` (see 2026-10-13 entry). M2·4 and the in-progress M2·5 work were sitting on one local branch.
+- Decision:
+  1. **Admin `feature/*` PRs target `main`**, the same convention as the widget repo. Merging to `main` is the human-gated gate. The backend keeps `develop` → `main`.
+  2. **One PR per M2 item.** M2·4 → `feature/m2-4-widget-config-theming` (PR wisegift-admin#1). M2·5 → `feature/m2-5-placements-catalog-sync`, stacked on M2·4 until #1 merges.
+- Follow-up: the HQ `CLAUDE.md` branch rule ("target `develop`, never PR against `main`") should name the backend only and list widget + admin as `main`-trunk repos. CLAUDE.md is PO-owned; flagged, not auto-edited.
+- Made by: Product Owner (advised by claude)
+
+## 2026-10-14 — Admin ↔ backend transport: same-origin Next.js proxy (decided); embedded-admin auth model (PENDING)
+- Context: Running the admin locally against staging failed with `TypeError: Failed to fetch` on `/admin/v1/auth/me`. The dashboard called the backend cross-origin, but `AdminSecurityConfig` scopes CORS to `/widget/v1/**` only, by design ("admin stays same-origin"). A second gap: unauthenticated `/admin/v1/**` returns **403**, not the documented **401** (no `authenticationEntryPoint`), so the admin can't route a logged-out user to `/login`.
+- Decision (made):
+  1. **The admin reaches the backend through a same-origin proxy**: Next.js `rewrites()` maps `/admin/v1/*` to `WISEGIFT_BACKEND_URL` (server-only env). Session + XSRF cookies are first-party to the dashboard (`SameSite=Lax` as in architecture.md), and no backend CORS is needed for the admin API. The admin must be hosted on a Node runtime, not a static export. PR wisegift-admin#2.
+  2. **Unauthenticated admin calls return 401** (`HttpStatusEntryPoint(UNAUTHORIZED)`); 403 stays for authenticated-but-forbidden. Backend PR in progress.
+- Rejected: **CORS + credentials on `/admin/v1/**`.** It forces `SameSite=None; Secure` cookies, which browsers increasingly block as third-party, and that breaks the embedded case.
+- **PENDING decision — embedded-admin auth model.** Inside the Shopify admin iframe (`admin.shopify.com`), the dashboard is a cross-site frame, so browsers (Safari ITP, Chrome third-party-cookie restrictions) may withhold its cookies even with the same-origin proxy. Shopify's recommended model for embedded apps is **App Bridge session tokens** (short-lived JWT in `Authorization`, verified by the backend with the app secret and mapped to the tenant via the shop domain). This would replace or complement the email+password / Google cookie session. Options to evaluate:
+  (a) session tokens for embedded use + cookie session for standalone use;
+  (b) session tokens only (merchant identity = the Shopify staff user); drop email/password;
+  (c) keep cookies and accept degraded embedded behaviour (not recommended).
+  Inputs needed: `security-and-privacy` (token verification, tenant binding, CSRF implications), `backend-engineer` (filter + tenant resolution), `frontend-engineer` (App Bridge `idToken()` in the API client), `product-analyst` (standalone admin login: is it needed at MVP?). Must be decided before M2·3 onboarding ships to a pilot.
+- Made by: Product Owner (advised by claude); the auth-model item stays open for a PO decision.
