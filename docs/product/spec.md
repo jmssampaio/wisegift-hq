@@ -146,10 +146,11 @@ As a widget shopper, I want to see a small set of relevant product recommendatio
 
 ### Acceptance Criteria
 - [ ] Recommendations render as a horizontal scrollable strip of product cards on desktop; vertical stack on mobile.
-- [ ] Each card shows product image, title, price, and a **View product** CTA that navigates to the merchant's own product page (`/products/{handle}`) in the same tab.
+- [ ] Each card shows product image, title and price. The whole card is the link to the merchant's own product page (`/products/{slug}` on the shop's storefront domain), and it opens in a **new tab**, so the widget drawer stays open and the shopper can keep comparing (`decisions.md` 2026-10-07, item 3; matches the widget code).
+- [ ] Because the link opens a new tab, the card's accessible name tells screen-reader users so (for example "Product title, opens in a new tab"). A small visual new-tab indicator is optional and must not crowd the card.
 - [ ] Default set size is 5 products. Configurable per placement (3–10) by the merchant.
 - [ ] If fewer than the requested number of candidates pass the ranking threshold, the widget shows the products it has (never pads with irrelevant items).
-- [ ] Click on a product card fires a `product-clicked` event before navigating.
+- [ ] Clicking a product card fires a `product_clicked` event. Because the current page stays open, the event does not depend on an unload beacon.
 - [ ] If the recommendation call fails or returns zero results, the widget renders a graceful fallback (top-N merchant bestsellers or precomputed cold recs for the current PDP), never an error message visible to the shopper.
 
 ---
@@ -160,12 +161,21 @@ As a widget shopper, I want to see a small set of relevant product recommendatio
 As a merchant admin, I want the widget's impact on my revenue to be measurable so that I can trust WiseGift's lift claims.
 
 ### Acceptance Criteria
-- [ ] On first widget render for a browser, the widget generates an **anonymous session ID** (UUID v4, 30-day sliding TTL) and stores it in localStorage under a WiseGift-scoped key. No merchant customer identity is attached.
-- [ ] The session is deterministically assigned to **exposed** or **holdout** on first render: 90% exposed, 10% holdout. Assignment is stable across placements and page loads for the session lifetime.
-- [ ] Holdout sessions see the widget in a **placebo state**: the hook and form render identically, but the recommendation slot is either hidden or filled with a merchant-configured static fallback (never WiseGift-generated recs). Placebo is invisible to the shopper.
+- [ ] **Consent gating (pilot gate, `decisions.md` 2026-10-14 "`_wg_session` order join … G5").** Each tenant has a `consentModeRequired` flag (`tenants.consent_mode_required`), **default `true`** (fail closed). When it is `true`, the widget reads the Shopify Customer Privacy API (`analyticsProcessingAllowed()`) before any measurement. Without consent: no session ID, no localStorage write, no cart attribute, no events. The widget still renders for the shopper in degraded mode, with a per-request holdout coin flip (2026-09-29 "Widget consent for EU"). Degraded shoppers are outside the measured population. G5 must ship (widget + backend) before the widget runs on any pilot storefront.
+- [ ] **Consent ordering.** The widget learns `consentModeRequired` only from the session bootstrap response (`POST /widget/v1/session`, architecture §9.2), and that response already contains a `sessionId`. The widget therefore must not persist that `sessionId`, write the `_wg_session` cart attribute, append the `wg_session` URL marker, or emit events until it has read the flag and, when the flag is `true`, confirmed consent. Without consent, the ID is kept in memory for the current page only.
+  - *Open (frontend-engineer + security-and-privacy):* may a previously stored `wg_session` be read and sent on the bootstrap call before the flag is known? See architecture §7.
+- [ ] **`consentModeRequired = false` (PENDING PO + attorney confirmation).** This is the legitimate-interest mode: the widget measures without a consent signal, under the 2026-09-29 reasoning (first-party UUID, no PII, 30-day TTL, EU-only, GDPR Art. 6(1)(f)). The 2026-10-14 security review found that the cart attribute creates a join key to the merchant's identified customer, and that weakens this reasoning. So no tenant is switched to `false` until the PO and an attorney confirm the mode is still defensible.
+- [ ] If measurement is allowed (see consent gating), the widget stores an **anonymous session ID** (UUID v4, 30-day sliding TTL) in localStorage under the key `wg_session` and re-sends it on every bootstrap. The ID is the one the session bootstrap returned: the backend honours a valid stored ID, or mints one. No merchant customer identity is attached. If localStorage is blocked, no cart attribute is written (2026-10-14, R4).
+- [ ] The session is deterministically assigned to **exposed** or **holdout** by the backend from the session ID, and returned as `isHoldout` at bootstrap. The widget never computes its own split. The default split is **90% exposed / 10% holdout** for every tenant. A design partner may opt in to **80/20** as an explicit, recorded merchant choice, and is told that 20% of triggered traffic gets the placebo (`decisions.md` 2026-10-14, M1·2 D4). Assignment is stable across placements and page loads for the session lifetime. A split change applies only to sessions first shown after the change. The server-side `sessions.is_holdout` value is authoritative for measurement.
+- [ ] Holdout sessions see the widget in a **placebo state**: the hook and form render identically, but after intent submission the recommendation slot **collapses neutrally**. It shows no "no matches" copy and no WiseGift-generated recs (`decisions.md` 2026-10-14, M1·2 D6, replacing the earlier "hidden or merchant static fallback" wording). Placebo is invisible to the shopper. Required before the first pilot readout.
 - [ ] Every widget interaction fires a typed event to the WiseGift event API: `widget_shown`, `widget_engaged`, `intent_submitted`, `product_clicked`, tagged with `tenant_id`, `session_id`, `placement`, `intent_mode`, `is_holdout`, timestamp.
-- [ ] The `orders/create` Shopify webhook is received by the WiseGift backend for every merchant order. WiseGift extracts only `order_id`, `line_items[].platform_product_id`, `line_items[].quantity`, `total_price`, `currency`, and correlates to a session via a client-side widget-planted marker (a `wg_session=<id>` query param appended to product URLs on click, or Shopify cart attribute if available). Customer PII fields are dropped at ingest and never persisted.
-- [ ] Attribution report joins events + orders on `session_id` within a **7-day attribution window** from the last `product_clicked` event.
+- [ ] The `orders/create` Shopify webhook is received by the WiseGift backend for every merchant order. WiseGift extracts only `order_id`, `line_items[].platform_product_id`, `line_items[].quantity`, `line_items[].price`, `total_price`, `currency`, `created_at`, and correlates the order to a session through a widget-planted marker. Sources are checked in this order (`decisions.md` 2026-10-14, R1):
+  1. the **`_wg_session` cart attribute**, which reaches the order's `note_attributes`;
+  2. the legacy `wg_session` cart attribute;
+  3. the `wg_session=<id>` URL marker appended to rec-card links (`landing_site` / `referring_site`).
+
+  The widget writes the cart attribute **identically for both arms**, so holdout orders can be attributed. The URL marker exists only for exposed clicks. Markers must be strict v4 UUIDs (R2). Customer PII fields are dropped at ingest and never persisted. *Note:* the M1·2 spec (§3.1, gap G2) excludes URL-marker orders from lift, because the URL marker is exposed-only.
+- [ ] Attribution report joins events + orders on `session_id` (tenant-scoped) within a **7-day attribution window** anchored on the session's **last symmetric widget event** before the order (`widget_shown`, `widget_engaged` or `intent_submitted`). The order must also come **after the session's first trigger event** in the range. The window does **not** anchor on `product_clicked`, because holdout sessions cannot produce clicks (`decisions.md` 2026-10-14, M1·2 D3). Full rule: `docs/engineering/m1-2-lift-measurement.md` §3.2.
 - [ ] Merchant dashboard renders KPIs against the holdout (see Analytics dashboard feature).
 
 ---
@@ -255,15 +265,23 @@ As a merchant admin, I want visibility into how my catalog is syncing and the ab
 As a merchant admin, I want to see the widget's impact on my store in one screen so that I know whether it's worth keeping.
 
 ### Acceptance Criteria
-- [ ] Default date range: last 30 days. Configurable ranges: 7d, 14d, 30d, 90d.
-- [ ] KPI tiles, each shown as `exposed vs holdout` with lift percentage and a significance flag (green if p < 0.05, grey if not enough data yet):
+> Measurement definitions (populations, attribution join, statistics, API contract) live in `docs/engineering/m1-2-lift-measurement.md`. PO decisions D1–D9 are in `decisions.md` 2026-10-14.
+
+- [ ] Default date range: last 30 days. Configurable ranges: 7d, 14d, 30d, 90d. Ranges and daily trend points use **UTC day boundaries**, and the UI labels them "UTC" (M1·2 D9).
+- [ ] **Population** (M1·2 D2): lift KPIs default to **triggered sessions**, meaning sessions that submitted the intent form. A secondary **store-level view** (all sessions that saw the widget, `shown`) is available through a population switch on the same screen. The active population is named in the screen header and in the CSV.
+- [ ] **Lift tiles**, each shown as `exposed vs holdout` with lift percentage and a significance flag. **Green** = significant positive (p < 0.05). **Red** = significant negative (M1·2 D7). **Grey** = not significant, or not enough data yet:
   - **Widget CTR** (widget_engaged / widget_shown)
-  - **Add-to-cart rate on recommended products** — sessions where a product-clicked event was followed by a Shopify `carts/update` including that product within 15 minutes.
-  - **Conversion rate** on sessions that saw the widget (order within 7-day attribution window / widget_shown sessions).
-  - **AOV** for orders from widget-exposed sessions vs holdout.
-  - **Revenue per session** (attributed order revenue / widget_shown sessions).
+  - **Conversion rate**: sessions with ≥ 1 order inside the 7-day attribution window / sessions in the active population.
+  - **AOV** for attributed orders, exposed vs holdout.
+  - **Revenue per session**: attributed order revenue / sessions in the active population.
+- [ ] **Revenue** is Shopify `total_price`. That is gross: shipping and tax included, before refunds. Tiles and the CSV label it "Gross order value (incl. shipping & tax, before refunds)" (M1·2 D8).
+- [ ] **Recommendation diagnostics (exposed only, no lift claim)** replace the former add-to-cart tile (M1·2 D1). They are shown as absolute rates for the exposed arm, with no holdout column, no lift percentage and no significance colour:
+  - **Rec click-through**: triggered exposed sessions with ≥ 1 `product_clicked` after the trigger.
+  - **Rec purchase rate**: triggered exposed sessions with ≥ 1 attributed order containing a product the session clicked.
+  - Add-to-cart rate is **not measured at MVP**. There is no `carts/update` ingestion, and holdout has no recommended products to compare against.
 - [ ] A small line chart per KPI shows daily trend over the selected range.
-- [ ] A minimum-data callout displays if any KPI has fewer than 5,000 exposed sessions in the selected range ("Not enough data yet — need N more exposed sessions").
+- [ ] A minimum-data callout displays if any KPI has fewer than 5,000 exposed sessions (in the active population) in the selected range ("Not enough data yet — need N more exposed sessions"). Each lift tile also shows **"readout at N sessions"** and the **minimum detectable lift at the current sample size** ("a lift smaller than X% would not be detectable yet"), so pilots know what the data can and cannot show (M1·2 D4).
+- [ ] The live dashboard is not the source of case-study claims. Those come only from the pre-registered readout run by `recommendations-specialist` (M1·2 D4, spec §5.5).
 - [ ] Data is refreshed hourly; a timestamp shows last refresh.
 - [ ] All numbers are export-to-CSV.
 - [ ] No cohort analysis, funnel drill-down, or per-recommendation breakdown at MVP — those are post-MVP.
@@ -284,15 +302,17 @@ As a merchant admin, I want to see my plan and usage so that I know when I'm app
 
 ---
 
-## Feature: Recommendation API — `POST /v1/recommendations`
+## Feature: Recommendation API — `POST /widget/v1/recommendations`
 
 ### User Story
 As the widget, I want to fetch personalised recommendations for the current shopper's intent so that I can display relevant products.
 
 ### Acceptance Criteria
-- [ ] Endpoint: `POST /v1/recommendations`. Auth: tenant public key + short-lived signed request token issued to the widget bundle (rotates hourly).
-- [ ] Request body: `session_id`, `placement`, `intent_mode`, `intent` (relationship, occasion, budget_min, budget_max, interests[]), `context` (current `platform_product_id` if on a PDP), `limit` (default 5).
-- [ ] Response body: `recommendations[]` (each: `platform_product_id`, `slug`, `title`, `price`, `image_url`, `rank_score`), `cache_hit` (boolean), `served_from` (`live_llm` | `cache` | `precomputed` | `fallback`).
+> Exact wire shapes (camelCase) are in `architecture.md` §9.2. The field names below are logical names.
+
+- [ ] Endpoint: `POST /widget/v1/recommendations`. Auth: the short-lived (1 h) widget JWT issued by `POST /widget/v1/session`. That bootstrap call resolves the tenant from the storefront's `Origin` against the merchant's shop domain or custom domain; there is no public key. The request's session ID must match the token's, otherwise the call is rejected (403).
+- [ ] Request body: session ID, `placement`, intent mode, `intent` (relationship, occasion, budget_min, budget_max, interests[]), `context` (current `platform_product_id` if on a PDP), `limit` (default 5, max 10).
+- [ ] Response body: `recommendations[]` (each: platform product ID, `slug`, `title`, `price`, image URL, rank score), cache hit (boolean), served-from (`live_llm` | `cache` | `precomputed` | `fallback`).
 - [ ] The endpoint enforces the **per-tenant hard usage cap** — over-cap requests are served from precomputed cold recs, cache hit is set to true, `served_from = precomputed`.
 - [ ] The endpoint enforces the **per-session rate limit** (max 20 live-LLM calls per session per hour); over-limit requests are served from cache/precomputed.
 - [ ] p95 latency budget: **300 ms** end-to-end.
@@ -301,14 +321,18 @@ As the widget, I want to fetch personalised recommendations for the current shop
 
 ---
 
-## Feature: Event API — `POST /v1/events`
+## Feature: Event API — `POST /widget/v1/events`
 
 ### User Story
 As the widget, I want to record shopper interactions so that attribution and analytics are accurate.
 
 ### Acceptance Criteria
-- [ ] Endpoint: `POST /v1/events`. Same auth as the recommendation API.
-- [ ] Accepts a batch of events (`events[]`), each: `event_type` (`widget_shown` | `widget_engaged` | `intent_submitted` | `product_clicked`), `session_id`, `placement`, `intent_mode`, `is_holdout`, `timestamp`, optional `platform_product_id`, optional `rank_score` and `served_from` (echoed from the rec response).
+> Exact wire shape (camelCase; for example the product ID travels as `shopifyProductId` and the holdout flag as `holdout`) is in `architecture.md` §9.2.
+
+- [ ] Endpoint: `POST /widget/v1/events`. Same auth as the recommendation API. Each event's session ID must match the token's (otherwise 403).
+- [ ] Accepts a batch of 1–10 events (`events[]`), each with: event type (`widget_shown` | `widget_engaged` | `intent_submitted` | `product_clicked`), session ID, `placement`, intent mode, holdout flag, `timestamp`, optional platform product ID, optional rank score and served-from (echoed from the rec response), and optional intent-form schema version.
+- [ ] The client holdout flag is never trusted. The server uses `sessions.is_holdout`.
+- [ ] Success returns **202 Accepted** with no body.
 - [ ] Events are validated against a strict schema; unknown fields are rejected (fail fast on client bugs).
 - [ ] Events are enqueued and processed asynchronously into the analytics store. p95 write latency < 100 ms.
 - [ ] The endpoint is fire-and-forget from the widget's perspective — no retry storms if a request fails.
@@ -326,7 +350,7 @@ As the WiseGift backend, I want to record order events to attribute revenue lift
 - [ ] Idempotency: repeated webhooks for the same `order_id` are deduplicated.
 - [ ] From the order payload we retain only: `order_id`, `line_items[].platform_product_id`, `line_items[].quantity`, `line_items[].price`, `total_price`, `currency`, `created_at`, `tenant_id` (derived from shop domain).
 - [ ] All customer PII fields (`customer`, `billing_address`, `shipping_address`, `email`, `phone`, `client_details`) are dropped at ingest and never persisted, logged, or forwarded.
-- [ ] Correlation to a widget session is done via a `wg_session` cart attribute or query-string marker planted by the widget on product-click; unattributed orders are still stored (to compute merchant-wide baselines) but do not contribute to per-session lift.
+- [ ] Correlation to a widget session is read in this order: the `_wg_session` cart attribute (`note_attributes`), then the legacy `wg_session` cart attribute, then the `wg_session` URL marker (`landing_site` / `referring_site`). Values that are not strict v4 UUIDs are ignored (`decisions.md` 2026-10-14, R1/R2). Unattributed orders are still stored (to compute merchant-wide baselines) but do not contribute to per-session lift.
 - [ ] Webhook processing p95 < 500 ms.
 
 ---
@@ -366,7 +390,14 @@ As the founder, I want the AI cost of running the product to be bounded regardle
 ### What we store
 - **Per tenant:** identity (shop domain, Shopify shop ID, region, plan), catalog snapshot with embeddings, widget config, placement config, feature flags.
 - **Per session:** anonymous session ID, exposed/holdout assignment, events (widget_shown, widget_engaged, intent_submitted, product_clicked), intent submissions (recipient relationship, occasion, budget, interests — no free-text PII).
-- **Per order:** filtered order payload — `order_id`, line items (product IDs, quantities, prices), total, currency, timestamp, tenant. No customer identifiers.
+- **Per order:** filtered order payload — `order_id`, line items (product IDs, quantities, prices), total, currency, order `created_at`, receipt time, tenant, plus the widget `session_id` when the order carries a marker. No customer identifiers. The `session_id` is pseudonymous, and through the `_wg_session` cart attribute it can be joined to the merchant's identified customer (`decisions.md` 2026-10-14). That is why it is nulled at 120 days (below).
+
+### Retention (`decisions.md` 2026-10-14, M1·2 D5 and "Order data … 18-month retention")
+- [ ] Raw widget `events` are kept **120 days**. `sessions` rows are kept **120 days** after the session was last seen.
+- [ ] `orders_attributed.session_id` is **nulled at 120 days**. This breaks the customer ↔ widget-history link while keeping the order for baselines.
+- [ ] Order rows (attributed and unattributed) are kept **18 months** from the order's `created_at`, then hard-deleted.
+- [ ] The anonymous daily aggregate `analytics_kpi_daily` (no session IDs) is kept **18 months**. It serves dashboard trend lines older than the raw-event window.
+- [ ] Enforcement is the **M3·1 scheduled purge job, which is not built yet**. Until it ships, nothing is purged. Tenant uninstall still overrides all of the above: everything for the tenant is hard-purged at day 30, and that job is also M3·1.
 
 ### What we never store
 - Merchant customer names, emails, phone numbers, addresses, IPs.
@@ -377,8 +408,10 @@ As the founder, I want the AI cost of running the product to be bounded regardle
 ### Region
 All storage and compute in **EU regions** at MVP (Neon EU, application hosting in EU). US region considered only when a US pilot is signed.
 
+**Known exception, being closed:** OpenAI embedding and ranking calls (shopper intent incl. free-text interests, plus candidate products) currently go to `api.openai.com`, which is US processing. Moving to an OpenAI EU data-residency project is decided but not yet switched. It waits on PO preconditions on the OpenAI account (`decisions.md` 2026-10-14 "LLM processing moves to an OpenAI EU data-residency project"; `architecture.md` §1).
+
 ### Data-processing role
-WiseGift is a **data processor** for the merchant's shopper data (anonymous session events + filtered order records). A **DPA is required** for every merchant, including pilots. Template owned by `privacy-legal-advisor`.
+WiseGift is a **data processor** for the merchant's shopper data (pseudonymous session events + filtered order records). A **DPA is required** for every merchant, including pilots. Drafts are owned by `security-and-privacy` and are informational only, pending PO and attorney review: `docs/legal/dpa-template.md`, `docs/legal/consent-position.md`, `docs/legal/sub-processors.md`.
 
 ---
 
@@ -405,6 +438,7 @@ WiseGift is a **data processor** for the merchant's shopper data (anonymous sess
 - Multi-user seats per merchant tenant (single-user admin at MVP).
 - Public API for merchants to hit recommendation endpoints from server-side code (widget-only at MVP).
 - Any behavioural tracking beyond widget interactions and the single order-confirmation webhook.
+- Shopify `carts/update` ingestion and an add-to-cart KPI (`decisions.md` 2026-10-14, M1·2 D1).
 
 ---
 
@@ -419,7 +453,14 @@ WiseGift is a **data processor** for the merchant's shopper data (anonymous sess
 - **Language coverage** (2026-09-29): MVP ships widget copy in EN, ES, PT. No DE / FR / IT preemptively. Rationale: pilot pool is EU merchants (ES/PT initially, UK/DE eventually); EN covers the UK case; DE / FR / IT translations are cheap to add per-pilot on demand (one signed merchant = one translation pass), not preemptively. See `docs/decisions.md` 2026-09-29 "Language coverage".
 - **Custom-app pilot billing** (2026-09-29): Public App Store billing throughout, with a Stripe safety net if App Store review is not approved by the first pilot's day-90 conversion. Rationale: single billing system through the lifecycle is cleaner than dual-track; Stripe engineering is deferred until we actually need it (i.e. review runs long OR a specific pilot converts before public app is live). Submission to App Store review is planned for day 60 of the first pilot so approval lands before day 90. See `docs/decisions.md` 2026-09-29 "Custom-app pilot billing".
 - **Merchant data export SLA** (2026-09-29): Support-only export at MVP — merchant emails support, we run a manual query and hand back a signed URL to a JSONL file within 5 business days. Self-serve export becomes an Enterprise-tier feature post-MVP once a real merchant asks. Rationale: mid-market pilots don't demand this; Enterprise negotiates it in the contract; premature to build self-serve before any demand signal. See `docs/decisions.md` 2026-09-29 "Merchant data export SLA".
-- **Widget consent for EU** (2026-09-29): No Consent Mode integration at MVP launch; ship the escape-hatch code path from day one so a stricter pilot can be flipped into consent-gated mode without a code change. Rationale: our session-ID data flow (first-party UUID, no PII, no cross-site tracking, 30-day TTL, EU-only) sits inside the CNIL-line "strictly-necessary measurement" reading of ePrivacy Art. 5(3), with GDPR Art. 6(1)(f) legitimate interests as belt-and-braces. Residual risk (Germany's DSK / Italy's Garante may read stricter) is mitigated by the shipped escape hatch. Position paper at `docs/legal/consent-position.md`. See `docs/decisions.md` 2026-09-29 "Widget consent for EU".
+- **Widget consent for EU** (2026-10-14, supersedes 2026-09-29). **Current position:**
+  - Consent gating through the Shopify Customer Privacy API (`analyticsProcessingAllowed()`) is a **hard gate before any pilot storefront**.
+  - Each tenant carries `consentModeRequired`, **default `true`** (fail closed). Without consent there is no session ID, no storage, no cart attribute and no events, and recs are served in degraded mode.
+  - `consentModeRequired = false` (legitimate-interest mode, measure without a consent signal) is **PENDING PO + attorney confirmation**.
+  - Why it changed: the `_wg_session` cart attribute (attribution gap G1) creates a join key between the merchant's identified customer and the widget history, which the 2026-09-29 reasoning did not cover.
+  - Detail: Widget — Attribution & session tracking; `decisions.md` 2026-10-14 "`_wg_session` order join … G5"; drafts in `docs/legal/consent-position.md`.
+
+  *History:* on 2026-09-29 the decision was "no Consent Mode integration at MVP; ship the escape hatch", with `consent_mode_required` defaulting to `false`. It relied on the CNIL-line "strictly-necessary measurement" reading of ePrivacy Art. 5(3), with GDPR Art. 6(1)(f) as belt-and-braces (`decisions.md` 2026-09-29 "Widget consent for EU").
 - **App Store category** (2026-09-29): Primary category **Marketing → Upselling & Cross-selling**; secondary (if App Store rules permit) **Store Design → Product Discovery**. Rationale: mid-market ICP searches Marketing → Upselling for revenue-per-session lift; Product Discovery is the second organic entry for the "gift finder" mental model. Positioning inside the listing leads with "AI recommendations that also do gifts" so we don't cap addressable use to gifting seasons. Listing artefacts at `docs/growth/app-store-listing.md`. See `docs/decisions.md` 2026-09-29 "App Store category".
 
 *The seven pivot-era scope decisions are captured in `docs/decisions.md` entry dated 2026-09-29 "Frozen MVP scope".*

@@ -1385,3 +1385,39 @@
   - **D6 widget PR.** Owner: `frontend-engineer`.
   - **D7 dashboard rendering**, in M2·6.
 - Made by: Product Owner (advised by claude, recommendations-specialist proposal)
+
+## 2026-10-14 — LLM processing moves to an OpenAI EU data-residency project
+- Context: the `security-and-privacy` sub-processor check found that the backend calls `https://api.openai.com`, which is US processing. Both `OpenAiEmbeddingClient` (the shopper intent plus the PDP title, embedded on every recommendation request) and `OpenAiRankingClient` (the intent including free-text interests, plus up to 50 candidate products) use it. This contradicts the EU-only rule for MVP.
+- Decision: **use an OpenAI API project created with the Europe data-residency region** and point both clients at the EU endpoint (`https://eu.api.openai.com`, to be confirmed against current OpenAI docs).
+  - **Rejected: Azure OpenAI EU Data Zone.** It needs a new client, auth and ops.
+  - **Rejected: Mistral.** It means a model swap, a catalog re-embed and a ranking-quality re-evaluation.
+  - **Rejected: accepting US processing with SCCs.** It breaks the EU-only promise.
+- Why: smallest change. `wisegift.openai.base-url` and `wisegift.ranking.base-url` are already configurable (`OpenAiProperties`, `RankingProperties`), so this is a key and env-var change. Keeping the same embedding model keeps stored vectors compatible.
+- Preconditions (PO, on the OpenAI account), before switching:
+  1. Eligibility: confirm EU residency is available for the account. It can only be set on a **new** project.
+  2. Model availability in the EU region: the pinned `gpt-4o-mini-2024-07-18`, `gpt-4o-2024-08-06` and `text-embedding-3-small`.
+  3. Zero data retention: whether it is automatic for EU projects or needs approval.
+  4. OpenAI DPA/SCCs executed.
+- Rollout:
+  1. Create the EU project and key.
+  2. Set the base-url env vars and the new key on Render staging. This is side-effectful and PO-gated.
+  3. Smoke-test recommendations and the catalog sync.
+  4. Then production.
+  5. Update `sub-processors.md` (OpenAI row: EU processing, ZDR status) and DPA 7.2/10.2.
+  - `backend-engineer`: confirm the env-var binding names, and add a startup log of the effective base URLs. Optionally, fail the production profile when a non-EU OpenAI host is configured.
+- Open: whether shoppers should be warned against entering personal data in free text (Art. 9 exposure). Attorney input is needed.
+- Made by: Product Owner (advised by claude, security-and-privacy review)
+
+## 2026-10-15 — M1·2 P1–P3 accepted: trigger definition, widget CTR as integrity check, URL-marker orders excluded from lift
+- Context: `product-analyst` flagged that pre-intent PDP recs (spec "Gift intent hook", recs after ~3 s) would make D2's `triggered` population depend on the treatment. `recommendations-specialist` checked the widget code on `main`: recs are fetched only after `intent_submitted`, on every placement, so the bias is **latent, not active**. Details: `docs/engineering/m1-2-lift-measurement.md` §1.3–§1.4, §2.1, §3.1, G13.
+- Decision (PO accepted the specialist's recommendations):
+  - **P1, trigger.** A session's trigger is the first moment the arms can differ, and it is logged identically in both arms:
+    - `intent_submitted`, on any placement; or
+    - `widget_shown` on a mount that renders recs before intent. That event carries `pre_intent_recs = true`, set from the placement and config, never from the bucket.
+    - `t₀` is the earliest trigger across placements. The placement filter uses the placement of the first trigger.
+    - On a pre-intent mount, holdout keeps the identical hook with a collapsed rec slot (zero height, no copy, no `/recommendations` call; consistent with D6).
+    - Gate (G13): pre-intent PDP auto-render must ship in the same release as the event flag and backend support. Server-side holdout enforcement (G8) must also cover requests without intent.
+  - **P2, widget CTR.** It is an **A/A integrity check**, not a lift tile: engagement at or before `t₀`, in `shown` sessions. `intent_submit_rate` is renamed `trigger_rate`.
+  - **P3, URL-marker orders.** Orders matched only through the URL marker are **excluded from lift**, because holdout can never produce them. They still count in exposed-only diagnostics and in `integrity.urlOnlyAttributedOrders`. Until G2 (persisting the attribution source) ships, mixed sources force lift tiles to `insufficient_data`.
+- Follow-up: `product-analyst` to align `spec.md` and `architecture.md` wording (the 3-second PDP criterion, §10.2 step 3, the CTR tile).
+- Made by: Product Owner (advised by claude, recommendations-specialist)

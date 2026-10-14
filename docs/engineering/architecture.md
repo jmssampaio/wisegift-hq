@@ -28,8 +28,9 @@ Backend selects environment via `SPRING_PROFILES_ACTIVE=production|staging|local
 | Embeddable widget | Preact + Web Components, Shadow DOM | ≤ 50 KB gzipped, async, CDN-served |
 | Merchant admin dashboard | Next.js (App Router) | Session auth, same-origin API calls. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 | Backend | Spring Modulith (Java) | Hexagonal per module; evolved from `wisegift-backend` |
-| Recommendation LLM | Anthropic Claude via API | Haiku 4.5 default; Sonnet escalation behind per-tenant flag |
-| Embeddings | OpenAI `text-embedding-3-small` (1536d, Matryoshka-reducible) | Stored in pgvector, model version tracked per vector. EU covered via OpenAI DPA. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
+| Recommendation LLM (ranker) | OpenAI chat completions via API | `gpt-4o-mini-2024-07-18` default; `gpt-4o-2024-08-06` escalation behind the per-tenant flag `feature_flags.escalate_ranker`. Behind the vendor-neutral `RankingClient` port (`OpenAiRankingClient`). Replaced Claude Haiku 4.5 / Sonnet (`decisions.md` 2026-10-06 "PR 7d"). EU residency: see the row below |
+| Embeddings | OpenAI `text-embedding-3-small` (1536d, Matryoshka-reducible) | Stored in pgvector, model version tracked per vector. Same OpenAI account and key as the ranker. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
+| OpenAI data residency | OpenAI API project with Europe data residency (decided, not yet switched) | Both `OpenAiEmbeddingClient` and `OpenAiRankingClient` currently call `https://api.openai.com`, which is **US processing**. Decision `decisions.md` 2026-10-14 "LLM processing moves to an OpenAI EU data-residency project": a new EU project and key, with both base URLs (`wisegift.openai.base-url`, `wisegift.ranking.base-url`) pointed at the EU endpoint (`https://eu.api.openai.com`, to be confirmed). Switch is gated on PO preconditions (eligibility, EU availability of the three pinned models, zero data retention, OpenAI DPA/SCCs) and a PO-approved staging env change |
 | Primary DB | PostgreSQL + pgvector (Neon EU) | Shared multi-tenant, `tenant_id NOT NULL` |
 | Cache + rate limits | Redis (managed, EU) | Response cache, per-tenant usage cap, per-session rate limit, kill switch |
 | Platform integrations | Shopify Admin API + Theme App Extensions | MVP; VTEX / SFCC / custom REST post-MVP behind common adapter |
@@ -37,8 +38,8 @@ Backend selects environment via `SPRING_PROFILES_ACTIVE=production|staging|local
 | Hosting | Render EU (backend + admin) | Widget CDN separate |
 | Observability | Structured JSON logs, per-tenant cost telemetry stream | Alerting on daily-spend threshold per tenant |
 | Identity — merchant admin | Email + password + Google OAuth (Spring Security + BCrypt) | MVP is single-user per tenant, no SSO, no MFA. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
-| Identity — widget shopper | None (anonymous session ID) | No PII, session ID in localStorage |
-| Identity — widget → API | Short-lived HMAC-signed request tokens (rotates hourly) | Token-issuing endpoint scoped to merchant domain allowlist |
+| Identity — widget shopper | None (anonymous session ID) | No PII. Session ID in localStorage key `wg_session`, written only when measurement is allowed (§7 consent gate) |
+| Identity — widget → API | Short-lived HMAC-signed JWT (HS256, 1 h TTL) | Issued by `POST /widget/v1/session`. The tenant is resolved from the request `Origin` host against `platform_credentials.platform_shop_domain` / `custom_domain` (§9.1) |
 | Identity — Shopify → API | OAuth (per-tenant tokens) + HMAC on webhooks | Standard Shopify pattern |
 
 ---
@@ -79,7 +80,7 @@ graph TD
 
     subgraph "External"
         SHOPIFY["Shopify Admin API<br/>+ webhooks"]
-        ANTHROPIC["Anthropic API<br/>(Haiku 4.5 / Sonnet)"]
+        OPENAI["OpenAI API<br/>(GPT-4o-mini / GPT-4o ranker,<br/>text-embedding-3-small)"]
     end
 
     WIDGET -->|"widget.js (async, lazy)"| CDN
@@ -92,9 +93,10 @@ graph TD
     CATALOG -->|"catalog sync + webhooks"| SHOPIFY
     PLATFORM -->|"OAuth install / webhook receiver"| SHOPIFY
     CATALOG --> PG
+    CATALOG -->|"embeddings"| OPENAI
     RECO --> PG
     RECO --> REDIS
-    RECO --> ANTHROPIC
+    RECO -->|"intent embedding + ranking"| OPENAI
     EVENTS --> PG
     EVENTS --> REDIS
     TENANT --> PG
@@ -105,7 +107,7 @@ graph TD
 ## 3. Component responsibilities
 
 ### Widget (Preact + Web Components)
-Runs inside the merchant's storefront (Shopify theme). One tag on the page: `<wisegift-widget data-tenant-id="…" data-placement="…"></wisegift-widget>`, plus one `<script async>` loading `widget.js` from the CDN. Renders with Shadow DOM isolation; inherits brand accent + typography via CSS variables; ≤ 50 KB gzipped total. Emits events to the WiseGift event API. Assigns each browser to exposed (90%) or holdout (10%) on first render.
+Runs inside the merchant's storefront (Shopify theme). One tag on the page: `<wisegift-widget data-tenant-id="…" data-placement="…"></wisegift-widget>`, plus one `<script async>` loading `widget.js` from the CDN. Renders with Shadow DOM isolation; inherits brand accent + typography via CSS variables; ≤ 50 KB gzipped total. Emits events to the WiseGift event API. Each browser session is exposed or holdout according to the server-computed `isHoldout` returned at bootstrap; the widget never rolls its own split. 90/10 by default, or 80/20 for design partners who opt in (`decisions.md` 2026-10-14, M1·2 D4). Measurement is consent-gated (§7).
 
 ### Merchant admin dashboard
 Standalone web app (React/Next.js). Merchants install the Shopify app, land here for onboarding, widget configuration, placement management, and the analytics dashboard. Single-user per tenant at MVP. Same-origin API access with session auth.
@@ -121,7 +123,7 @@ Single deployable unit (`app/`) — split into services only when scale demands 
 | `tenant` | `tenants`, `admin_users`, `widget_config`, `intent_form_schemas` | `TenantQueryPort` | — | Admin auth (login/register), widget & intent-form config CRUD |
 | `platform-integrations` | `platform_credentials`, `catalog_sync_runs` | `PlatformCatalogSource`, `PlatformOrderStream` | Shopify Admin API + webhooks | Shopify OAuth callback, HMAC webhook receivers (`products/*`, `orders/create`, `app/uninstalled`, `inventory_levels/update`) |
 | `catalog` | `tenant_products`, `tenant_product_variants`, `precomputed_recs` | `CatalogQueryPort`, `CatalogIngestPort` | OpenAI embeddings API | Admin catalog-sync controls (manual resync, sync-status panel) |
-| `recommendation` | `cost_telemetry` | — | Anthropic API, Redis | `POST /widget/v1/session` (bootstrap), `POST /widget/v1/recommendations` |
+| `recommendation` | `cost_telemetry` | — | OpenAI API (intent embedding + ranker), Redis | `POST /widget/v1/session` (bootstrap), `POST /widget/v1/recommendations` |
 | `events` | `sessions`, `events`, `orders_attributed` | `AnalyticsQueryPort` | — | `POST /widget/v1/events`, admin analytics endpoints |
 | `app` | — | — | — | Spring Boot entry, Spring Security config, Flyway config, widget JWT-HMAC verification filter |
 
@@ -142,7 +144,12 @@ Single deployable unit (`app/`) — split into services only when scale demands 
 
 ### External services
 - **Shopify Admin API** — catalog reads, order webhooks, theme extension metadata. Rate limit: 2 req/s leaky-bucket baseline, 40 burst (per tenant).
-- **Anthropic API** — Claude Haiku 4.5 for re-ranking and intent parsing (default). Claude Sonnet 4.6 for full-form gift-intent flows behind a per-tenant flag. Every call tagged with `tenant_id` for cost attribution.
+- **OpenAI API**: three uses.
+  - `gpt-4o-mini-2024-07-18` for re-ranking and intent parsing (default).
+  - `gpt-4o-2024-08-06` for full-form gift-intent flows, behind the per-tenant flag `feature_flags.escalate_ranker`.
+  - `text-embedding-3-small` for catalog embeddings at ingest and for the shopper intent at serve time.
+
+  The ranker receives the shopper intent payload, including free-text interests, plus up to 50 candidate products. Every call is tagged with `tenant_id` for cost attribution. **Region:** calls currently go to `api.openai.com` (US processing). Moving them to an OpenAI EU data-residency project is decided but not yet switched (§1, `decisions.md` 2026-10-14).
 
 ---
 
@@ -186,7 +193,7 @@ Every recommendation request goes through this decision tree:
 4. **Live LLM path** —
    - Embed the intent (interests + budget + occasion + context) via the embedding model.
    - Vector search on `tenant_products.embedding` for top-K candidates (K = 50).
-   - Re-rank the top-K + intent payload via Claude Haiku 4.5 (or Sonnet if feature flag on).
+   - Re-rank the top-K + intent payload via OpenAI GPT-4o-mini (GPT-4o if the tenant's `escalate_ranker` flag is on).
    - Return top-N (default 5) with `served_from = live_llm`.
 5. **Fallback** — LLM error or vector search returns zero → precomputed cold recs; if those are also empty, top-N merchant bestsellers; last resort, hide the recommendation slot. The widget never renders an error state.
 
@@ -231,8 +238,13 @@ Kill switch behaviour: while set, every recommendation call serves from precompu
 
 ### Session lifecycle
 
-- On first widget render on a browser: generate UUID v4 → localStorage key `wg_session_id`, 30-day sliding TTL.
-- Assign exposed vs holdout deterministically from the session ID: `hash(session_id) mod 100 < 10 → holdout`, else exposed. Assignment stored on first `widget_shown` event; never re-rolled.
+- **Consent gate (pilot gate, `decisions.md` 2026-10-14 "`_wg_session` order join … G5").** When the tenant's `consentModeRequired` flag is set (`tenants.consent_mode_required`, default `true`, fail closed), the widget checks the Shopify Customer Privacy API (`analyticsProcessingAllowed()`) first. Without consent: no session ID, no localStorage, no cart attribute, no events. Recs are served in degraded mode (per-request holdout coin flip, `attribution_mode=degraded`), and these shoppers are outside the measured population. Widget and backend ship as separate PRs. Both must land before any pilot storefront.
+  - **Ordering.** The widget learns `consentModeRequired` only from the `POST /widget/v1/session` response (§9.2). It therefore must not persist the `sessionId` returned by that call, write the cart attribute, or emit events until it has both the flag and, when the flag is `true`, a positive `analyticsProcessingAllowed()`. In the no-consent case the returned `sessionId` lives in memory only, for the lifetime of the page, to bind the token for `/widget/v1/recommendations`. Because a fresh UUID is minted on every bootstrap, that session's `isHoldout` is effectively a per-page-load coin flip (degraded mode).
+  - **Open (frontend-engineer + security-and-privacy):** whether the widget may read and send an already-stored `wg_session` on the bootstrap request before it knows the flag. Reading storage is itself access under ePrivacy Art. 5(3). The conservative rule is: check `analyticsProcessingAllowed()` locally first, and send no stored ID without a positive signal. Under that rule, a `consentModeRequired = false` tenant would need a second bootstrap to keep its sticky session, so this tradeoff needs a decision.
+  - **`consentModeRequired = false` (PENDING PO + attorney confirmation).** This is the legitimate-interest mode: the widget measures without a consent signal, as in the 2026-09-29 position (first-party UUID, no PII, 30-day TTL, EU-only, GDPR Art. 6(1)(f)). It does not call `analyticsProcessingAllowed()` before measuring. The 2026-10-14 security review found that the `_wg_session` cart attribute creates a join key to the merchant's identified customer, which weakens the 2026-09-29 reasoning. So no tenant should be set to `false` until the PO and an attorney confirm this mode is still defensible (`docs/legal/consent-position.md`).
+- On first widget render on a browser (consent permitting): generate UUID v4 → localStorage key `wg_session`, 30-day sliding TTL.
+- Assign exposed vs holdout deterministically from the session ID: `hash(session_id) mod 100 < holdout_percent → holdout`, else exposed. `holdout_percent` is per tenant: 10 by default, 20 for design partners who opt in (`decisions.md` 2026-10-14, M1·2 D4). Assignment stored on first `widget_shown` event; never re-rolled. A split change applies only to sessions first shown after it, and every change records its effective-from timestamp, so lift analysis can segment by split period. `sessions.is_holdout` is authoritative for measurement. The client `is_holdout` flag on events is never trusted.
+- Holdout sessions render the **placebo**: a neutral collapsed rec slot with no "no matches" copy, and no `/widget/v1/recommendations` call (`decisions.md` 2026-10-14, M1·2 D6).
 - Every widget event carries `session_id`, `is_holdout`, `tenant_id`, `placement`.
 
 ### Event ingest
@@ -245,14 +257,18 @@ Kill switch behaviour: while set, every recommendation call serves from precompu
 ### Order attribution
 
 - Shopify `orders/create` webhook → HMAC-verified → filtered at ingest (drop customer PII fields) → stored in `orders_attributed`.
-- Session correlation: the widget appends `?wg_session=<id>` to product links on click OR sets a Shopify cart attribute (whichever the theme extension supports). The webhook reads this back from the cart / referrer.
-- Attribution window: **7 days** from the last `product_clicked` event for that session.
+- Session correlation: the widget writes the session id to the **`_wg_session` cart attribute** for **both arms**, so it reaches the order's `note_attributes`. The cart POST stays on the storefront origin. There is no write when localStorage is blocked (widget PR #17, R1–R4). The widget also appends `?wg_session=<id>` to rec-card links (exposed only). The webhook reads, in order: `_wg_session` → legacy `wg_session` cart attribute → URL marker (`landing_site` / `referring_site`). It accepts strict v4 UUIDs only (`decisions.md` 2026-10-14). Because URL-marker orders are exposed-only, M1·2 §3.1 / G2 excludes them from lift.
+- Attribution window: **7 days** anchored on the session's **last symmetric widget event** before the order (`widget_shown` / `widget_engaged` / `intent_submitted`). The order must come after the session's first trigger event. It is **not** anchored on `product_clicked`, which holdout cannot produce (`decisions.md` 2026-10-14, M1·2 D3; full rule in `m1-2-lift-measurement.md` §3.2).
 - Unattributed orders still stored (contribute to merchant-wide baselines) but do not count toward per-session lift.
 
 ### Lift computation
 
-- Daily aggregation job per tenant computes the five KPIs (widget CTR, add-to-cart rate on recommended products, conversion rate on engaged sessions, AOV, revenue-per-session), always as `exposed vs holdout` with p-value.
-- Results cached hourly on the admin dashboard side; a minimum-data callout shows if any KPI has fewer than 5,000 exposed sessions in the selected range.
+Normative detail: `docs/engineering/m1-2-lift-measurement.md` (populations §1, KPIs §2, statistics §5, computation model §6, API §7). Decisions: `decisions.md` 2026-10-14 (M1·2 D1–D9).
+- Unit = widget session. **Headline population = `triggered`** (≥ 1 `intent_submitted`). **`shown`** is returned as the secondary, store-level view (D2).
+- Lift KPIs (`exposed vs holdout`, p-value + CI): conversion rate, AOV, revenue-per-session. Revenue = Shopify `total_price`: gross, including shipping and tax, before refunds, and labelled as such (D8). Widget CTR: M1·2 §2.1 treats it as an A/A integrity check, not a lift KPI. This is not yet a recorded PO decision; `spec.md` still lists it as a lift tile.
+- The add-to-cart KPI is dropped at MVP, and `carts/update` is not ingested. It is replaced by exposed-only **rec click-through** and **rec purchase rate**, with no lift claim (D1).
+- Significance renders green / red (significant negative) / grey / grey (D7). Day boundaries are **UTC** (D9).
+- Results cached hourly. A minimum-data callout shows if fewer than 5,000 exposed sessions are in the headline population for the selected range. The response also carries "readout at N sessions" and the MDE at current n (D4). Case-study claims come only from the pre-registered readout (D4).
 
 ---
 
@@ -272,8 +288,9 @@ Platform-agnostic. The identifiers a merchant carries on their source platform (
 | plan | VARCHAR(32) | `PILOT`, `STARTER`, `GROWTH`, `SCALE`, `ENTERPRISE` (Java enum names, `@Enumerated(EnumType.STRING)`) |
 | monthly_usage_cap | INTEGER | Live-LLM recommendation calls / month; default 50000 |
 | daily_spend_cap | NUMERIC(10,2) | Nullable. NULL = fall through to per-plan constant. Set explicitly only for pilots with custom headroom or outlier tenants. See `decisions.md` 2026-09-29 "Resolved 6 open questions" |
-| feature_flags | JSONB | Per-tenant boolean flags (e.g. `{"sonnet_escalation": true}`). Starts as `{}`. See `decisions.md` 2026-09-29 |
-| consent_mode_required | BOOLEAN | Default `false`. When `true`, the widget always operates in consent-gated mode regardless of the shopper's Shopify Customer Privacy signal — no localStorage write, no session ID, no event emission, holdout falls back to per-request coin flip with `attribution_mode=degraded`. Flipped by support for merchants in stricter DPA jurisdictions (typically DE, IT). See `decisions.md` 2026-09-29 "Widget consent for EU" |
+| feature_flags | JSONB | Per-tenant boolean flags (e.g. `{"escalate_ranker": true}`, which routes full-form gift intents to GPT-4o). Starts as `{}`. See `decisions.md` 2026-09-29 and 2026-10-06 "PR 7d" |
+| consent_mode_required | BOOLEAN | Default **`true`** (fail closed), exposed to the widget as `consentModeRequired`. When `true`, the widget measures only if the Shopify Customer Privacy API reports `analyticsProcessingAllowed()`. Without consent: no localStorage write, no session ID, no cart attribute, no event emission, and holdout falls back to a per-request coin flip with `attribution_mode=degraded`. `false` = legitimate-interest mode, measuring without a consent signal: **PENDING PO + attorney confirmation** (§7). Delivered to the widget as a top-level boolean in the session bootstrap response (§9.2) and to the admin in `GET /admin/v1/auth/me` → `tenant.consentModeRequired`. See `decisions.md` 2026-10-14 "`_wg_session` order join … G5", which supersedes the 2026-09-29 "Widget consent for EU" default of `false` |
+| holdout_percent | SMALLINT | Allowed values 10 or 20, default 10. 20 = design-partner 80/20 opt-in. Passed to `HoldoutAssigner` by the session bootstrap and the `widget_shown` sticky assignment. Each change is audited with an effective-from timestamp (e.g. `tenant_holdout_changes`). See `decisions.md` 2026-10-14 "M1·2 D4" |
 | active | BOOLEAN | `false` until onboarding wizard completes |
 | soft_deleted_at | TIMESTAMPTZ | Nullable |
 | created_at | TIMESTAMPTZ | |
@@ -449,11 +466,13 @@ Order webhook, filtered at ingest (no customer PII).
 |---|---|---|
 | platform_order_id | VARCHAR(64) | PK |
 | tenant_id | UUID | |
-| session_id | UUID | Nullable if not correlated |
-| total_price | DECIMAL(12,2) | |
+| session_id | UUID | Nullable if not correlated. Pseudonymous personal data. **Nulled at 120 days** (retention, below) |
+| attribution_source | VARCHAR(16) | **PROPOSED, not built** (M1·2 G2, `m1-2-lift-measurement.md` §3.1 / §8). Nullable. Which marker produced `session_id`: `note_attribute` (the `_wg_session` or legacy `wg_session` cart attribute, written for both arms), `landing_site` or `referring_site` (URL marker, exposed-only). Lift uses `note_attribute` only; until this column exists, the analytics response flags `attributionSourceMixed: true` |
+| total_price | DECIMAL(12,2) | Shopify `total_price`: gross, incl. shipping and tax, before refunds (M1·2 D8) |
 | currency | VARCHAR(3) | |
 | line_items | JSONB | `[{platform_product_id, quantity, price}, ...]`; only these fields retained |
-| received_at | TIMESTAMPTZ | |
+| created_at | TIMESTAMPTZ | Shopify order `created_at`. The attribution-window clock (`m1-2-lift-measurement.md` §3.2) and the 18-month retention clock. Falls back to `received_at` when null |
+| received_at | TIMESTAMPTZ | Webhook receipt time |
 
 ### `cost_telemetry` (optional durable store)
 
@@ -472,6 +491,22 @@ If cost telemetry is streamed to Prometheus / OpenTelemetry, this table may not 
 | latency_ms | INTEGER | |
 | occurred_at | TIMESTAMPTZ | |
 
+### `analytics_kpi_daily` (proposed, M3·1)
+
+An anonymous daily aggregate: one row per `(tenant_id, day, placement, arm, population, metric_key)`. It holds sufficient statistics only, with no session IDs. Shape: `m1-2-lift-measurement.md` §6.1. It is not built yet.
+
+### Data retention (`decisions.md` 2026-10-14, M1·2 D5 + "Order data … 18-month retention")
+
+| Data | Retention | Notes |
+|---|---|---|
+| `events` (raw) | **120 days** from `occurred_at` | Pseudonymous (`session_id`) |
+| `sessions` | **120 days** after `last_seen_at` | Must outlive the last event that references it |
+| `orders_attributed.session_id` | **Nulled at 120 days** | Breaks the customer ↔ widget-history link that the `_wg_session` cart attribute creates. The order row itself stays |
+| `orders_attributed` rows (attributed and unattributed) | **18 months** from order `created_at`, then hard-deleted | PII-free. Kept for merchant-wide baselines and year-over-year comparison |
+| `analytics_kpi_daily` | **18 months** | Anonymous aggregate; serves trend lines beyond raw retention |
+
+**Enforcement: the M3·1 scheduled purge job, which is not built yet.** Until it ships, nothing is purged and every row above is kept indefinitely. Tenant hard-purge after uninstall (§4, also M3·1 and also not built) is separate and overrides these periods: everything for that tenant goes at day 30.
+
 ---
 
 ## 9. API contracts
@@ -480,68 +515,86 @@ If cost telemetry is streamed to Prometheus / OpenTelemetry, this table may not 
 
 | Caller | Mechanism | Path prefix |
 |---|---|---|
-| Widget (shopper's browser) | Short-lived HMAC-signed request token (rotates hourly, issued by `POST /widget/v1/session`) | `/widget/v1/*` |
-| Merchant admin (dashboard session) | Session cookie (HTTPOnly, SameSite=Lax) after email+password or Google OAuth login | `/api/v1/admin/*` |
+| Widget (shopper's browser) | Short-lived HMAC-signed JWT (HS256, 1 h TTL, issued by `POST /widget/v1/session`) | `/widget/v1/*` |
+| Merchant admin (dashboard session) | Session cookie (HTTPOnly, SameSite=Lax) after email+password or Google login, reached through the admin's same-origin Next.js proxy (`decisions.md` 2026-10-14 "Admin ↔ backend transport"). The embedded-admin auth model (App Bridge session tokens) is PENDING | `/admin/v1/*` |
 | Shopify webhook | HMAC verified against per-app shared secret | `/webhooks/shopify/*` |
 | Internal (jobs, ops) | mTLS or a rotating internal token | `/internal/*` |
 
-Widget token issuance flow:
-1. Widget bundle boot: read `data-tenant-id` from the `<wisegift-widget>` element, read `data-public-key` (baked into the Theme App Extension by the merchant during onboarding).
-2. Widget calls `POST /widget/v1/session` with `{ tenant_id, public_key, origin }`.
-3. Server verifies `public_key` matches tenant, `origin` matches the merchant's allowlisted domain, and issues a signed token (JWT-like, HMAC-SHA256, 1-hour TTL, `sub = tenant_id`, `session_id` claim if provided or fresh).
-4. Widget uses that token as `Authorization: Bearer <token>` on all subsequent calls until expiry, then refreshes.
+Widget token issuance flow (as built, `WidgetSessionController`):
+1. The widget calls `POST /widget/v1/session` with `{ sessionId?, placement }`. The 2026-10-07 decision moved this call to the shopper's first interaction with the hook, not widget mount.
+2. The server resolves the tenant from the browser `Origin` header: the host is matched against `platform_credentials.platform_shop_domain`, then `custom_domain`. A missing or unknown Origin returns **403**. A `tenantId` in the body is ignored, kept only for older bundles. No public key is checked.
+3. The server honours `sessionId` if it parses as a UUID, otherwise it mints a fresh v4. It then mints the JWT binding `tenant_id` + `session_id`, computes `isHoldout` (a pure function of the session ID, no write), and returns the response in §9.2. No `sessions` row is created until the first `widget_shown` event.
+4. The widget sends the token as `Authorization: Bearer <token>` on later calls until expiry, then bootstraps again. `/recommendations` and `/events` return **403** if the body's `sessionId` differs from the token's.
 
 ### 9.2 Widget API — `/widget/v1/*`
 
-#### `POST /widget/v1/session`
-Issue a signed request token for a widget instance.
+Wire format is **camelCase JSON** (Jackson defaults). The only snake_case keys are inside the recommendation request's `intent` and `context` sub-objects, which are pinned with `@JsonProperty`.
 
-- Body: `{ tenant_id, public_key, origin, session_id? }`
-- Response: `{ token, expires_at, session_id }`
+#### `POST /widget/v1/session`
+Bootstrap: issues the widget token, the holdout bucket and the render config. This is the only unauthenticated widget endpoint (Origin-checked, §9.1).
+
+- Body: `{ sessionId?, placement }` (`placement` required; `tenantId` accepted and ignored)
+- Response: `{ widgetToken, expiresAt, sessionId, isHoldout, consentModeRequired, config }`
+  - `isHoldout`: server-authoritative bucket for `sessionId`. The widget renders the placebo when it is `true` and never computes its own split.
+  - `consentModeRequired`: **top-level boolean**, from `tenants.consent_mode_required` (backend PR #69).
+  - `config`: `{ copy, copyForPlacement, placementsEnabled, themeTokens, borderRadiusPx, brandAccentColor }` (§10.5).
+- **Ordering constraint (consent).** The flag arrives only here, in the response to a call that already returned a `sessionId`. When `consentModeRequired` is `true` and `analyticsProcessingAllowed()` is not granted, the widget **must not persist the returned `sessionId`** (no localStorage write), must not write the `_wg_session` cart attribute, and must not emit events. It may keep the ID in memory for the page, only to satisfy the token binding on `/widget/v1/recommendations` (degraded mode, §7). Whether a stored `wg_session` may be sent on this request before the flag is known is an open question (§7).
 
 #### `POST /widget/v1/recommendations`
 Fetch personalised recommendations for the current shopper's intent.
 
-- Auth: signed token
-- Body: `{ session_id, placement, intent_mode, intent, context, limit }`
-- Response: `{ recommendations[], served_from, cache_hit }`
+- Auth: widget JWT. `sessionId` must equal the token's session (else 403).
+- Body: `{ sessionId, placement, intentMode, intent: { relationship, occasion, budget_min, budget_max, interests[] }, context: { platform_product_id }, limit }`. `limit` defaults to 5 and is clamped to 10.
+- Response: `{ recommendations: [ { platformProductId, slug, title, price, imageUrl, rankScore } ], cacheHit, servedFrom }`
 - p95 latency budget: 300 ms
 
 #### `POST /widget/v1/events`
 Emit a batch of widget interaction events.
 
-- Auth: signed token
-- Body: `{ events: [ { event_type, session_id, placement, intent_mode, is_holdout, occurred_at, platform_product_id?, rank_score?, served_from? } ] }` (max 10)
-- Response: `{ accepted: N }`
-- p95 write latency < 100 ms; fire-and-forget from widget
+- Auth: widget JWT. Every event's `sessionId` must equal the token's session (else 403).
+- Body: `{ events: [ { eventType, sessionId, placement, intentMode?, holdout, timestamp, shopifyProductId?, rankScore?, servedFrom?, intentFormSchemaVersion? } ] }`, 1 to 10 events.
+  - `holdout` is ignored server-side; the server uses `sessions.is_holdout`.
+  - `shopifyProductId` is stored as `events.platform_product_id`.
+  - `timestamp` is stored as `occurred_at` (client clock).
+- Response: **202 Accepted, no body**. Writes happen async. p95 write latency < 100 ms; fire-and-forget from the widget.
 
-### 9.3 Admin API — `/api/v1/admin/*`
+### 9.3 Admin API — `/admin/v1/*`
 
-All admin API endpoints scoped to the caller's tenant, resolved from session.
+Every admin endpoint is scoped to the caller's tenant, taken only from the session-bound `AdminPrincipal` and never from a path, body or query parameter. JSON is camelCase. Errors use `{ code, message }`. Unauthenticated calls return **401** and authenticated-but-forbidden calls return **403** (`decisions.md` 2026-10-14; the 401 entry point was in a backend PR still in progress at that date).
 
-#### Onboarding & config
-- `GET  /api/v1/admin/tenant/me` — full tenant + widget config
-- `PATCH /api/v1/admin/tenant/me` — update vertical (onboarding step 1), plan info, `active` toggle
-- `GET  /api/v1/admin/tenant/me/widget-config`
-- `PATCH /api/v1/admin/tenant/me/widget-config`
-- `GET  /api/v1/admin/tenant/me/placements`
-- `PATCH /api/v1/admin/tenant/me/placements/:placement` — enable / disable
-- `GET  /api/v1/admin/tenant/me/intent-form` — active version + schema
-- `POST /api/v1/admin/tenant/me/intent-form/preview` — dry-run preview without saving
+> **Verification note (2026-10-14):** routes marked *verified* were read from the controllers in the `wisegift-backend` working tree, which was on branch `feature/m2-admin-config-apis`. They were **not** checked against `origin/develop` in this pass. The widget-config routes in particular may live only on that feature branch until it merges. Routes marked *no backend route found* turned up no controller, but the search went by likely file names, not a full grep. Treat them as proposals, and `backend-engineer` defines the contract when they're built.
 
-#### Catalog
-- `GET  /api/v1/admin/catalog/summary` — product count, last sync, last reconciliation
-- `POST /api/v1/admin/catalog/resync` — force full re-sync (rate-limited; ops-facing)
+#### Auth (verified, `AdminAuthController`)
+- `POST /admin/v1/auth/signup`: invite token + email + password → 201 + `MeResponse`
+- `POST /admin/v1/auth/signup/google`: invite token + Google ID token → 201
+- `POST /admin/v1/auth/login`: email + password → 200
+- `POST /admin/v1/auth/login/google`: Google ID token → 200
+- `POST /admin/v1/auth/logout` → 204
+- `GET  /admin/v1/auth/me` → `{ admin: { id, email, createdAt }, tenant: { id, region, vertical, plan, active, consentModeRequired } }`
 
-#### Analytics
-- `GET  /api/v1/admin/analytics/kpis?range=7d|14d|30d|90d` — the five KPIs with holdout comparison + significance flag
-- `GET  /api/v1/admin/analytics/kpis/export?range=…&format=csv`
+#### Widget configuration, theming, placements (verified, `AdminWidgetConfigController`)
+Every mutation returns the full `WidgetConfigResponse`: `{ hookCopy, placementHooks, intentFormFields, recsPerWidget, brandAccentColor, borderRadiusPx, themeTokens (overrides only), placements: [ { placement, enabled, themeLocation } ], updatedAt }`.
+- `GET  /admin/v1/widget/config`
+- `PUT  /admin/v1/widget/config`: partial update, so null fields are left unchanged (`hookCopy` ≤ 200, `placementHooks`, `intentFormFields`, `recsPerWidget` 3–10, `brandAccentColor`, `borderRadiusPx` 0–24)
+- `PUT  /admin/v1/widget/theme-tokens`: `{ tokens: { key: value } }`. A null value clears that token.
+- `PUT  /admin/v1/widget/theme-tokens/reset`: `{ tokens: [ key, ... ] }`
+- `PUT  /admin/v1/widget/placements/{placement}`: `{ enabled }`
 
-#### Account
-- `GET  /api/v1/admin/account` — plan, current-month usage, days-until-reset
-- `POST /api/v1/admin/auth/login` (email+password)
-- `POST /api/v1/admin/auth/google` (Google OAuth callback)
-- `POST /api/v1/admin/auth/logout`
+#### Catalog (verified, `CatalogAdminController`)
+- `GET  /admin/v1/catalog/sync-status` → `{ productCount, lastFullSyncAt, lastFullSyncStatus, lastWebhookAt: { topic: instant }, webhookHealth }`
+- `POST /admin/v1/catalog/sync/full` → 202 `{ status, trigger: "manual_full" }`; **429** + `Retry-After` past 1 per tenant per 24 h
+- `POST /admin/v1/catalog/sync/prices-and-stock` → 202 `{ status, trigger: "manual_prices" }`; **429** + `Retry-After` past 1 per tenant per hour
+
+#### Onboarding, tenant and intent form (no backend route found; likely not built)
+- Update vertical (onboarding step 1) and the `active` / Go-live toggle. The old placeholder was `PATCH /api/v1/admin/tenant/me`.
+- Intent-form schema read and dry-run preview. Intent-form field visibility is currently carried by `intentFormFields` on `PUT /admin/v1/widget/config`.
+
+#### Analytics (contract from M1·2; not verified in code)
+- `GET  /admin/v1/analytics?range=7d|14d|30d|90d&placement=all|<key>&population=triggered|shown`: lift KPIs (exposed vs holdout, CI, p-value, significance), exposed-only diagnostics, integrity block. Defaults `30d` / `all` / `triggered`. Full contract: `m1-2-lift-measurement.md` §7.
+- `GET  /admin/v1/analytics/export?range=…&placement=…&population=…`: `text/csv`
+
+#### Account (no backend route found; likely not built)
+- Plan, current-month usage, days until reset (spec "Merchant admin — Account & billing", M2·7). The old placeholder was `GET /api/v1/admin/account`.
 
 ### 9.4 Webhook receivers — `/webhooks/shopify/*`
 
@@ -565,7 +618,7 @@ Never exposed publicly. mTLS or internal token.
 
 - `POST /internal/precompute/:tenant_id` — trigger nightly precomputed-recs job (also runs on schedule)
 - `POST /internal/kill-switch/:tenant_id` — flip kill switch (ops)
-- `GET  /internal/health` — liveness + dependency checks (Postgres, Redis, Anthropic reachable)
+- `GET  /internal/health` — liveness + dependency checks (Postgres, Redis, OpenAI reachable)
 
 ---
 
@@ -592,10 +645,10 @@ The Theme App Extension block renders exactly two elements:
 ### 10.2 Lifecycle
 
 1. Script loads async → widget custom element upgrades → renders skeleton inside Shadow DOM.
-2. On first render this browser: generate `session_id` (localStorage, 30d TTL), assign holdout, request signed token via `POST /widget/v1/session`.
-3. On viewport entry (IntersectionObserver) or shopper interaction: fetch recommendations via `POST /widget/v1/recommendations`; emit `widget_shown`.
-4. On intent form submit: emit `intent_submitted`, refetch recommendations with intent payload.
-5. On product card click: emit `product_clicked`, append `?wg_session=<id>` to the target URL, navigate.
+2. Bootstrap via `POST /widget/v1/session` (on first hook interaction per the 2026-10-07 decision). The response carries `consentModeRequired` and the server-computed `isHoldout`. Only after reading the flag does the widget decide whether to measure (§7 consent gate, §9.2 ordering constraint). If measurement is allowed, it persists the `sessionId` (localStorage key `wg_session`, 30-day sliding TTL). If not, the ID stays in memory and nothing is persisted, written to the cart, or emitted.
+3. On viewport entry (IntersectionObserver) or shopper interaction: fetch recommendations via `POST /widget/v1/recommendations`; emit `widget_shown`; ensure the `_wg_session` cart attribute is set (both arms; §7 Order attribution).
+4. On intent form submit: emit `intent_submitted`, refetch recommendations with intent payload. Holdout sessions skip the fetch and render the neutral collapsed placebo slot (§7, D6).
+5. On product card click: emit `product_clicked` and open `https://<shop permanent domain>/products/<slug>?wg_session=<id>` in a **new tab** (`target="_blank"`, `rel="noopener noreferrer"`), so the widget drawer stays open for comparison (`decisions.md` 2026-10-07, item 3). Today the code appends the marker whenever a session ID is resolved. Under the consent gate it **must** be omitted when measurement is not allowed, including for an in-memory, unpersisted ID: the marker would otherwise reach the order and create the same join key that the gate is there to prevent.
 6. Batch and flush events every 1 second (or on the tab hiding).
 
 ### 10.3 Fallbacks
@@ -687,7 +740,7 @@ Delivery: `theme_tokens` ship with the widget bootstrap response from `POST /wid
 
 ### Regions
 
-- **All backend, DB, cache, and observability infra in EU regions.** Neon EU project, Render EU hosting, managed Redis EU, log aggregation EU. No cross-Atlantic hops for production data at MVP.
+- **All backend, DB, cache, and observability infra in EU regions.** Neon EU project, Render EU hosting, managed Redis EU, log aggregation EU. No cross-Atlantic hops for production data at MVP. **Known exception, being closed:** OpenAI embedding and ranking calls currently go to `api.openai.com` (US processing). The move to an OpenAI EU data-residency project is decided but gated on PO preconditions (§1, `decisions.md` 2026-10-14).
 - Widget CDN is global (Cloudflare / Fastly edge), serving a static JS bundle that carries no shopper data. This is not a data-residency concern.
 
 ### Environments
@@ -703,7 +756,7 @@ Three environments (see top of doc), each with its own Neon project, Redis insta
 
 ### Secrets management
 
-- Anthropic API key, Shopify app shared secret, per-tenant OAuth tokens (encrypted at rest in `platform_credentials`), Neon connection strings, Redis credentials — all in the secrets manager, never in code / YAML / Dockerfiles.
+- OpenAI API key (`WISEGIFT_OPENAI_API_KEY`, shared by embeddings and ranker; replaced by the EU-project key at the residency switch), widget token secret (`WISEGIFT_WIDGET_TOKEN_SECRET`), Shopify app shared secret, per-tenant OAuth tokens (encrypted at rest in `platform_credentials`), Neon connection strings, Redis credentials — all in the secrets manager, never in code / YAML / Dockerfiles.
 - Rotation is human-gated.
 
 ---
@@ -711,7 +764,7 @@ Three environments (see top of doc), each with its own Neon project, Redis insta
 ## 12. Security model
 
 - **Multi-tenant isolation** is a load-bearing invariant (see §4). Every cross-tenant leak is a P0.
-- **Widget request tokens** are short-lived (1 h), HMAC-signed, scoped to a single tenant. Token issuance is gated by public-key + domain allowlist. Compromise of a tenant's public key + domain is bounded to 1 h of abuse until rotation.
+- **Widget request tokens** are short-lived (1 h), HMAC-signed, and scoped to a single tenant and session. Issuance is gated only by matching the `Origin` header against the tenant's `platform_shop_domain` / `custom_domain`; there is no public-key check (§9.1). `Origin` is browser-attested, but a non-browser client can set it freely. So a token can be minted by anyone who knows a merchant's storefront host, and per-tenant usage caps and session rate limits are the real abuse bound. `security-and-privacy` to confirm this posture.
 - **Shopify webhooks**: HMAC verified against the per-app shared secret; fail closed on invalid signatures; log the rejection.
 - **Admin auth**: sessions are HTTPOnly, SameSite=Lax, secure cookies; password hashing via argon2id or scrypt; Google OAuth via a mature provider library.
 - **OAuth tokens**: encrypted at rest with a KMS-managed key; decrypted only in memory for outbound calls.
@@ -719,7 +772,7 @@ Three environments (see top of doc), each with its own Neon project, Redis insta
 - **Logging**: never log secrets, tokens, or PII. Filter order webhook payload at ingest before any log entry. Error responses do not leak internals in 500 bodies.
 - **Dependency posture**: pin action versions in CI; SBOM for the widget bundle; automated vulnerability scan on the backend module dependencies.
 
-Full threat model, findings register, and DPA text: `docs/legal/legal.md` (to be consolidated). Historical pre-pivot findings: `docs/archive/security-privacy-report-2026-07.md`.
+Privacy and legal drafts (informational, pending PO and attorney review): `docs/legal/dpa-template.md` (DPA, incl. retention §14), `docs/legal/consent-position.md` (ePrivacy / consent posture) and `docs/legal/sub-processors.md` (sub-processor list). There is no `docs/legal/legal.md`. Historical pre-pivot findings: `docs/archive/security-privacy-report-2026-07.md`.
 
 ---
 

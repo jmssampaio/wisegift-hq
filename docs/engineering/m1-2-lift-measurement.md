@@ -14,14 +14,21 @@
 > `wisegift-backend@origin/develop` (ff0b2a7) and
 > `wisegift-widget@origin/main` (b0a4c00). The staging DB was **not** queried;
 > the Neon tools were not available in this session.
+>
+> **Revision 2026-10-14 (after D1–D9 were accepted):** a product-analyst review
+> found that pre-intent PDP recs can bias D2's `triggered` population. The
+> resolution is in §1.4, along with two follow-up proposals (§2.1 CTR, §3.1
+> URL markers). All three are marked **ACCEPTED by PO 2026-10-15** and listed in
+> §9 as P1–P3. The code was re-read at `wisegift-widget@origin/main` (0abf63d,
+> after PR #17) and `wisegift-backend@origin/develop` (cf2a959).
 
 ---
 
 ## 0. TL;DR
 
 1. **The randomisation unit is the widget session.** That is the anonymous `wg_session` UUID, sticky for up to 30 days. Every KPI is computed per session and compared across the arms. No event-level ratios.
-2. **The headline population is triggered sessions**: sessions with at least one `intent_submitted`. Exposed and holdout behave identically up to and including that event, and they diverge right after it (recs vs placebo). This is the most powerful comparison that is still apples-to-apples. The store-level view (all `widget_shown` sessions) is returned alongside it.
-3. **Lift is real only for conversion, AOV and revenue-per-session.** Widget CTR cannot move by design, because the hook is identical in both arms. It becomes an **integrity check** (an A/A guardrail), not a lift tile. Add-to-cart on recommended products **cannot be measured at MVP**: there is no cart signal, and holdout has no recommended products. It is replaced by an exposed-only diagnostic. **PO decision needed.**
+2. **The headline population is triggered sessions**: sessions with at least one *trigger*, meaning the first moment the two arms can differ. Today that moment is `intent_submitted`, which is D2 as accepted. Exposed and holdout behave identically up to and including the trigger, and they diverge right after it (recs vs placebo). This is the most powerful comparison that is still apples-to-apples. The store-level view (all `widget_shown` sessions) is returned alongside it. **ACCEPTED by PO 2026-10-15 (P1, §1.4):** once a placement shows recs *before* any intent (the spec'd 3-second PDP auto-render), a `widget_shown` on that mount also counts as a trigger. Otherwise the triggered set would be selected by the treatment itself.
+3. **Lift is real only for conversion, AOV and revenue-per-session.** Widget CTR cannot move before the arms diverge, because the hook is identical in both arms. It becomes an **integrity check** (an A/A guardrail), not a lift tile (**ACCEPTED by PO 2026-10-15, P2**). Add-to-cart on recommended products **cannot be measured at MVP**: there is no cart signal, and holdout has no recommended products. It is replaced by an exposed-only diagnostic. **PO decision needed.**
 4. **The 7-day window is anchored on the session's last *symmetric* widget event** (`widget_shown` / `widget_engaged` / `intent_submitted`), **not** on `product_clicked`. Holdout can never fire `product_clicked`, so anchoring on it would hand the exposed arm attribution that holdout cannot get.
 5. **One statistical engine for every KPI.** Each KPI is a per-session mean (binary KPIs are means of 0/1). We use Welch's z on the difference, and a delta-method CI on relative lift. AOV is a ratio metric with a delta-method variance at the session level. Revenue is **winsorised at the pooled P99 order value**.
 6. **5,000 exposed sessions is a floor, not a power guarantee.** At that size we can only detect lifts of roughly +40% to +90% relative (§5.4). Realistic +10% lifts need about 165k–280k triggered sessions at 90/10. Pilots will mostly show grey tiles. **PO tradeoff needed.**
@@ -43,17 +50,63 @@
 | `widget_shown` | yes | yes | **yes** | Once per mount, on IntersectionObserver viewport-enter. Several placements on one page → several events. |
 | `widget_engaged` | yes | yes | **yes** | First hook click per mount. Hook is identical in both arms. |
 | `intent_submitted` | yes | yes | **yes** | Fired before `flow.submit`, i.e. before the arms diverge. |
-| (divergence point) | recs rendered | placebo = "no matches" empty state, no `/recommendations` call | — | |
+| (divergence point) | recs rendered | placebo = "no matches" empty state, no `/recommendations` call (D6 will replace it with a neutral collapsed slot) | — | |
 | `product_clicked` | yes | **never** | **no** | Only exists when recs exist. |
 
 **Consequence:** any metric or window anchor that involves `product_clicked` is **exposed-only by construction**.
 
+**Re-checked at `origin/main` 0abf63d:** this table still holds on **every** placement, PDP included. The widget calls `/recommendations` only from `flow.submit`, which runs after `intent_submitted`. There is no 3-second timer and no viewport-triggered fetch. The theme block does not pass a PDP product id (`contextPlatformProductId` is never set from Liquid). The spec and `architecture.md` §5 / §10.2 describe a pre-intent PDP path that the code does not have yet (see §1.4).
+
 ### 1.3 Populations (per range, per placement filter)
 - **`shown`**: sessions with ≥ 1 `widget_shown` in range. This is the store-level / intent-to-treat view and matches `spec.md`'s literal denominator.
-- **`triggered`** (headline): sessions with ≥ 1 `intent_submitted` in range. This is the standard *triggered analysis*. No session can be treated without first submitting intent, and nothing before submission differs between arms. So membership in this set is unaffected by treatment, and the comparison is unbiased. It also discards sessions that could never have been affected (pure dilution).
-  - Mapping to the PO's wording: `decisions.md` says "conversion on engaged sessions" and `spec.md` says "/ widget_shown sessions". Both are valid but diluted versions of `triggered`. I propose `triggered` as the headline and `shown` as the secondary view. **PO decision D2.**
-- **Trigger time** `t₀(s)` = the first trigger event of the session inside the range (first `widget_shown` for `shown`, first `intent_submitted` for `triggered`).
-- **Placement filter:** a session belongs to placement *p*'s population if its trigger event happened on *p*. Outcomes are still **all** attributed orders of that session, so per-placement numbers are **not additive** across placements. `placement=all` is the deduplicated, session-level view and is the default.
+- **`triggered`** (headline): sessions with ≥ 1 **trigger event** in range. This is the standard *triggered analysis*. A trigger event is the first point at which the arms can differ, and it is emitted identically in both arms:
+  - `intent_submitted`, on any placement (D2 as accepted); and
+  - **ACCEPTED by PO 2026-10-15 (P1, §1.4):** `widget_shown` on a mount that renders recs before any intent. The event carries `pre_intent_recs = true` for these mounts.
+
+  No session can be treated before its first trigger, and nothing before it differs between arms. So membership in this set is unaffected by treatment, and the comparison is unbiased. It also discards sessions that could never have been affected (pure dilution). Until a pre-intent placement ships, no `widget_shown` carries the flag, and the rule is exactly D2.
+  - Mapping to the PO's wording: `decisions.md` says "conversion on engaged sessions" and `spec.md` says "/ widget_shown sessions". Both are valid but diluted versions of `triggered`. **D2 (accepted):** `triggered` is the headline and `shown` is the secondary view.
+- **Trigger time** `t₀(s)` = the first trigger event of the session inside the range, **across all placements**. For `shown` it is the first `widget_shown`. For `triggered` it is the first trigger event as defined above.
+- **Placement filter (ACCEPTED by PO 2026-10-15, part of P1):** a session belongs to placement *p*'s population if its **first** trigger event (the one at `t₀`) happened on *p*.
+  - The previous rule used the first trigger *on p*. That rule breaks once pre-intent recs exist. Example: a shopper sees PDP recs on Monday and submits the home-page form on Thursday. Under the old rule, the session joins `home_hero` at Thursday's trigger, but it was already treated on Monday. Whether it ever reaches `home_hero` may then depend on Monday's treatment.
+  - First-trigger attribution is decided before any treatment, so it stays unbiased. A side benefit: placements now **partition** the sessions, so per-placement session counts add up to `placement=all`.
+  - Outcomes are still **all** attributed orders of the session. The placement is "where the session entered the experiment", not "which placement caused the order". Per-placement views remain labelled *exploratory* (§5.5).
+  - `placement=all` is the default.
+
+### 1.4 Pre-intent recommendations (PDP) and the trigger rule — PROPOSED, pending PO (P1)
+
+**Issue raised by product-analyst (2026-10-14).**
+- `spec.md` ("Widget — Gift intent hook") says PDP placements show context recs after about 3 s with no intent capture. `architecture.md` §5 (serving-policy step 3) and §10.2 (step 3, fetch on viewport entry) say the same.
+- On that path the exposed arm is treated **before** any `intent_submitted`. Under D2 as written, whether a session ever submits intent can then depend on the arm:
+  - auto-recs may satisfy a shopper who would otherwise have used the form, or
+  - they may prime a shopper to engage.
+- Either way, filtering on "submitted intent" compares two differently selected groups. This is post-treatment conditioning, and its direction is unknown. It also leaks into `placement=all`, because one session spans placements.
+
+**Verdict.**
+- **Today: no bias.** At `wisegift-widget@origin/main` 0abf63d, no placement renders recs before `intent_submitted` (§1.2). The backend's no-intent branch (`RealIntentCheck` → `served_from="precomputed"`) exists, but the widget never reaches it without a submitted form. D2 is unbiased for the code as it stands.
+- **Latent and real.** The pre-intent PDP path is an accepted acceptance criterion. The day `frontend-engineer` implements it, D2's `triggered` population becomes biased, on PDP and also on every other placement those sessions later touch. This is why it has to be fixed in the definition now, not after a pilot readout.
+
+**Rule (P1).**
+1. **A trigger is the first moment the arms can differ, logged identically in both arms.** For placements without pre-intent recs (`home_hero`, `gift_finder`, `floating`, and `pdp_slot` today), that moment is `intent_submitted`. For a mount that renders recs before intent (`pdp_slot` once the 3-second path ships), it is that mount's `widget_shown`.
+2. **The widget marks such mounts explicitly.** `widget_shown` carries `pre_intent_recs: true`. The flag is computed from placement and config only, **before the holdout bucket is known**, so it is identical across arms. The backend events schema must accept the field (the schema is strict). Reading the flag is safer than hard-coding "`pdp_slot` means pre-intent": it stays correct across widget versions and if the behaviour later becomes merchant-configurable.
+3. **Session level:** `t₀` = the earliest trigger of either kind, on any placement (§1.3). The placement filter uses the placement of that first trigger (§1.3).
+4. **Sequencing gate:** the 3-second PDP auto-render must not reach a pilot storefront without the flag and the matching backend change. Shipping one without the other silently biases every readout from that day on.
+
+**What the holdout sees on the pre-intent path (consistent with D6).**
+- The holdout widget runs **the same code path and timer** as exposed: same mount, same `widget_shown` (with the same flag), same 3-second wait.
+- When exposed renders the context recs, the holdout rec slot **stays collapsed**: zero height, no copy, no "no matches", no spinner, and **no `/recommendations` call**.
+- **The hook stays exactly where and how it is in the exposed arm.** If the exposed layout moves or shrinks the hook when recs appear, the difference is part of the treatment. The holdout must not imitate it.
+- A holdout shopper who later submits intent gets the D6 neutral collapsed slot, as today.
+- Server-side enforcement (G8) must cover the no-intent request as well: a holdout session gets an empty slate whether or not intent is present.
+
+**Cost of this rule (stated plainly).**
+- On PDP-heavy stores, `triggered` will be close to `shown`, because most PDP views become triggers. It includes shoppers who scrolled away before the 3 seconds passed and never saw a rec.
+- That is **dilution, not bias**. The lift estimate stays honest, but the per-session effect is smaller, so readouts need more sessions (§5.4).
+- A tighter trigger (a dedicated symmetric event fired at the 3-second mark in both arms) would cut the dilution. It needs a new event type and more widget logic. I don't recommend it for MVP. Revisit only if PDP readouts turn out too slow.
+
+**Alternatives considered and rejected.**
+- *Report PDP on `shown` and other placements on `triggered`, keeping the intent-only trigger.* This fixes the PDP tile but not `placement=all`: a session treated on a PDP and later triggered on the home page is still selected by treatment. The proposed rule is the general form of this idea.
+- *Show the precomputed PDP recs to the holdout too, and test only the intent-driven recs.* This keeps `intent_submitted` as a clean trigger, but it measures "intent recs vs WiseGift's own cold recs", not "WiseGift vs no WiseGift". It contradicts D6 and undersells the product to the merchant.
+- *Drop the 3-second auto-render from the spec.* That is a product call, not a measurement one. The rule above makes it unnecessary.
 
 ---
 
@@ -63,15 +116,24 @@ All rates are session-level. "Attributed order" is defined in §3.
 
 | # | KPI | Per-session value `yᵢ` | Population / denominator | Comparison | Role |
 |---|---|---|---|---|---|
-| 1 | **Widget CTR** | 1 if session has ≥ 1 `widget_engaged` | `shown` sessions | **integrity check** (expect no difference) | guardrail |
+| 1 | **Widget CTR** | 1 if session has ≥ 1 `widget_engaged` **at or before `t₀`** (or at any time, if the session has no trigger) | `shown` sessions | **integrity check** (expect no difference); **ACCEPTED by PO 2026-10-15 (P2)** | guardrail |
 | 2a | **Rec click-through** (replaces add-to-cart at MVP, see below) | 1 if ≥ 1 `product_clicked` after `t₀` | `triggered` **exposed** sessions only | **exposed-only**, no lift | diagnostic |
 | 2b | **Rec purchase rate** (replaces add-to-cart at MVP) | 1 if ≥ 1 attributed order contains a `platform_product_id` the session clicked | `triggered` **exposed** sessions only | **exposed-only**, no lift | diagnostic |
 | 3 | **Conversion rate** | 1 if ≥ 1 attributed order | `triggered` (headline) and `shown` (secondary) | **lift** | supporting |
 | 4 | **AOV** | ratio Σ revenue / Σ orders over converting sessions | converting sessions of the population | **lift, with mix-shift caveat** | supporting |
 | 5 | **Revenue per session** | Σ attributed order revenue (winsorised, §5.3) | `triggered` (headline) and `shown` (secondary) | **lift** | **primary** |
 
-### 2.1 Why CTR is an integrity check, not a lift
-Treatment starts *after* `intent_submitted`, which itself requires `widget_engaged`. So at the session level "ever engaged" can never be caused by recommendations. Its expected lift is exactly 0. If exposed and holdout CTR differ significantly (p < 0.01), the most likely cause is an instrumentation bug: holdout events being dropped, the placebo being visible, or assignment skew. The dashboard should then say so, not show it as a "win". The same logic applies to the intent-submit rate (`triggered`/`shown`), which is also returned as an integrity metric.
+### 2.1 Why CTR is an integrity check, not a lift — PROPOSED, pending PO (P2)
+**Recommendation: accept.** Widget CTR is not shown as a lift tile. It is returned as an integrity check, and `spec.md`'s CTR lift tile is replaced by this check. The `spec.md` edit is for product-analyst after PO approval.
+
+Why:
+- Treatment cannot start before the session's first trigger `t₀` (§1.3). Engagement *before* `t₀` happens while both arms see exactly the same widget, so the recommendations cannot cause it. Its expected difference is exactly 0.
+- So if exposed and holdout CTR differ significantly (p < 0.01), the most likely cause is an instrumentation bug: holdout events being dropped, the placebo being visible, or assignment skew. The dashboard should say so, not show it as a "win".
+- A CTR "lift" would be at best zero and at worst a bug presented as success. Neither belongs in front of a merchant.
+
+**Why "at or before `t₀`" and not "ever engaged":** today the two are the same, because `intent_submitted` requires `widget_engaged` first. Once pre-intent PDP recs exist (§1.4), an exposed shopper can see recs and *then* engage, so "ever engaged" would partly measure the treatment. Cutting the count at `t₀` keeps the check valid without a later redefinition.
+
+The same logic applies to the **trigger rate** (`triggered` / `shown`), which is also returned as an integrity metric. Whether a session ever reaches its first trigger is decided before any treatment.
 
 *(Event-level CTR, i.e. engaged events / shown events, could drift through repeat-visit behaviour. But it violates the independence assumption of any test, because events cluster within sessions. Do not use it.)*
 
@@ -90,7 +152,13 @@ AOV is conditioned on a post-treatment outcome (having converted). Suppose the w
 ### 3.1 Which orders are eligible
 An order `o` in `orders_attributed` is **eligible for lift** if all of the following hold:
 1. `o.tenant_id = :tenant` (always, in every subquery).
-2. `o.session_id IS NOT NULL` **and** the marker came from a **symmetric channel** (see G2): the `note_attributes` cart attribute written by the widget for both arms. URL-marker orders (`landing_site` / `referring_site`) can only exist for exposed sessions that clicked. They are **excluded from lift** but counted in the exposed-only diagnostics 2b. This requires persisting the marker source (G2). Until then, lift is computed with all marker sources and the response flags `attributionSourceMixed: true`.
+2. `o.session_id IS NOT NULL` **and** the marker came from a **symmetric channel** (see G2): the `note_attributes` cart attribute (`_wg_session`, or the legacy `wg_session`) written by the widget for both arms. **ACCEPTED by PO 2026-10-15 (P3). Recommendation: accept.**
+   - Orders matched **only** through a URL marker (`landing_site` / `referring_site`) are **excluded from lift**.
+   - They still count in the exposed-only diagnostic 2b and in `integrity.urlOnlyAttributedOrders`.
+   - Why: a URL marker can only exist for an exposed shopper who clicked a rec, because holdout has nothing to click.
+   - Example: a shopper uses "Buy it now" or an express wallet. That checkout skips the cart, so the cart attribute is missing. If the shopper is exposed, the URL fallback can still catch the order. If the shopper is in holdout, the order is lost.
+   - Counting those orders would credit WiseGift with sales that the holdout arm is structurally unable to record. Excluding them drops the same kind of order from both arms, so the comparison stays fair. The only cost is a slightly smaller sample.
+   - **Mechanism:** the marker source must be persisted (G2, a small migration, in M1·2 scope). If G2 has not landed, the response sets `attributionSourceMixed: true` and every lift tile degrades to `insufficient_data`. A mixed-source lift is never shown as significant. (This replaces the earlier interim rule, which computed lift with all sources and only flagged it.)
 3. `o.currency` = the tenant's reporting currency (the modal currency of the tenant's orders in range). Other currencies are counted in `integrity.currencyMismatchOrders` and excluded. No FX conversion at MVP.
 4. `o.created_at` is not null. If it is null, fall back to `received_at`.
 5. Not a test order (G6). This needs the `test` flag to be dropped or persisted at ingest.
@@ -147,7 +215,7 @@ Per `decisions.md` 2026-09-29 "Widget consent for EU", a consent-denied shopper 
 These are orders with a valid `session_id` but **no `sessions` row** for this tenant, or with no symmetric event in range: events dropped, ad-blocked events endpoint, marker from > 30 days ago, or a forged marker. They are excluded and counted in `integrity.orphanAttributedOrders`. Do not re-derive the arm via `HoldoutAssigner` for them. A session that never reached our event store has no trigger time, and including it would be asymmetric if event loss differs between arms.
 
 ### 4.4 Sample-ratio-mismatch (SRM) guard
-For each population: `z = (h − 0.10·n) / sqrt(n·0.10·0.90)`, where `n` = sessions in both arms and `h` = holdout sessions. If two-sided **p < 0.001**, the response sets `integrity.srm.ok = false`. The dashboard then shows a data-quality warning, and **every significance flag degrades to `insufficient_data`**. SRM is the cheapest, most reliable detector of the gaps in §7. The CTR/intent-submit A/A checks (§2.1) are the second line.
+For each population: `z = (h − 0.10·n) / sqrt(n·0.10·0.90)`, where `n` = sessions in both arms and `h` = holdout sessions. If two-sided **p < 0.001**, the response sets `integrity.srm.ok = false`. The dashboard then shows a data-quality warning, and **every significance flag degrades to `insufficient_data`**. SRM is the cheapest, most reliable detector of the gaps in §7. The CTR and trigger-rate A/A checks (§2.1) are the second line. (SRM uses the fixed 10%; under the D4 80/20 opt-in, it uses the tenant's split per split period.)
 
 ---
 
@@ -225,20 +293,33 @@ Purge enforcement goes into the M3·1 scheduled-purge job.
 ```sql
 WITH ev AS (           -- in-range events, arm from the session row
   SELECT e.session_id, s.is_holdout, e.event_type, e.placement,
-         e.platform_product_id, e.occurred_at AS ts          -- received_at after G4
+         e.platform_product_id, e.occurred_at AS ts,          -- received_at after G4
+         (e.event_type = 'intent_submitted'
+          OR (e.event_type = 'widget_shown' AND e.pre_intent_recs)) AS is_trigger   -- §1.4 (P1)
   FROM events e
   JOIN sessions s ON s.tenant_id = e.tenant_id AND s.session_id = e.session_id
   WHERE e.tenant_id = :tenant AND e.occurred_at >= :from AND e.occurred_at < :to
 ),
+first_ev AS (          -- first shown / first trigger per session, ACROSS placements (§1.3)
+  SELECT DISTINCT ON (session_id, kind) session_id, kind, ts, placement
+  FROM (SELECT session_id, 'shown' AS kind, ts, placement FROM ev WHERE event_type = 'widget_shown'
+        UNION ALL
+        SELECT session_id, 'triggered', ts, placement FROM ev WHERE is_trigger) x
+  ORDER BY session_id, kind, ts
+),
 sess AS (
-  SELECT session_id, bool_or(is_holdout) AS is_holdout,
-         min(ts) FILTER (WHERE event_type = 'widget_shown'
-                         AND (:placement IS NULL OR placement = :placement))     AS t0_shown,
-         min(ts) FILTER (WHERE event_type = 'intent_submitted'
-                         AND (:placement IS NULL OR placement = :placement))     AS t0_triggered,
-         bool_or(event_type = 'widget_engaged')                                  AS engaged,
-         bool_or(event_type = 'product_clicked')                                 AS clicked
-  FROM ev GROUP BY session_id
+  SELECT ev.session_id, bool_or(ev.is_holdout) AS is_holdout,
+         fs.ts AS t0_shown,     fs.placement AS placement_shown,
+         ft.ts AS t0_triggered, ft.placement AS placement_triggered,   -- placement filter applies to these
+         bool_or(ev.event_type = 'widget_engaged'
+                 AND (ft.ts IS NULL OR ev.ts <= ft.ts))                AS engaged_pre_t0,   -- KPI 1 (P2)
+         bool_or(ev.event_type = 'product_clicked')                    AS clicked
+  FROM ev
+  LEFT JOIN first_ev fs ON fs.session_id = ev.session_id AND fs.kind = 'shown'
+  LEFT JOIN first_ev ft ON ft.session_id = ev.session_id AND ft.kind = 'triggered'
+  GROUP BY ev.session_id, fs.ts, fs.placement, ft.ts, ft.placement
+  -- population P keeps sessions whose t0 is non-null and, if :placement is set,
+  -- whose first-trigger placement = :placement (never "first trigger on :placement")
 ),
 anchor AS (
   SELECT session_id, ts FROM ev
@@ -314,7 +395,7 @@ Path follows the live admin convention (`/admin/v1/catalog`, `/admin/v1/widget`)
     { "key": "widget_ctr", "role": "integrity", "comparison": "integrity_check", "unit": "ratio",
       "exposed": { "n": 41210, "value": 0.146 }, "holdout": { "n": 4580, "value": 0.147 },
       "pValue": 0.86, "integrityOk": true, "significance": "not_applicable" },
-    { "key": "intent_submit_rate", "role": "integrity", "comparison": "integrity_check", "...": "..." },
+    { "key": "trigger_rate", "role": "integrity", "comparison": "integrity_check", "...": "..." },
     { "key": "rec_click_through", "role": "diagnostic", "comparison": "exposed_only", "unit": "ratio",
       "exposed": { "n": 3110, "value": 0.38 }, "holdout": null, "significance": "not_applicable" },
     { "key": "rec_purchase_rate", "role": "diagnostic", "comparison": "exposed_only", "...": "..." }
@@ -327,7 +408,8 @@ Path follows the live admin convention (`/admin/v1/catalog`, `/admin/v1/widget`)
   "integrity": {
     "srm": { "expectedHoldoutShare": 0.10, "observedHoldoutShare": 0.0996, "pValue": 0.81, "ok": true },
     "attributionCoverage": { "storeOrders": 1840, "attributedOrders": 212, "share": 0.115 },
-    "attributionSourceMixed": true,
+    "attributionSourceMixed": false,
+    "urlOnlyAttributedOrders": 4,
     "orphanAttributedOrders": 3,
     "currencyMismatchOrders": 0,
     "degradedRequestShare": null,
@@ -336,7 +418,9 @@ Path follows the live admin convention (`/admin/v1/catalog`, `/admin/v1/widget`)
 }
 ```
 Field rules:
-- `significance` ∈ `significant_positive | significant_negative | not_significant | insufficient_data | not_applicable`. It is computed as: `insufficient_data` if `!sufficientData || !integrity.srm.ok`; else by `pValue < 0.05` and the sign of `lift.absolute`.
+- `significance` ∈ `significant_positive | significant_negative | not_significant | insufficient_data | not_applicable`. It is computed as: `insufficient_data` if `!sufficientData || !integrity.srm.ok || integrity.attributionSourceMixed` (the last condition is P3); else by `pValue < 0.05` and the sign of `lift.absolute`.
+- `urlOnlyAttributedOrders` (P3): orders whose only marker was a URL marker. They are excluded from lift and counted in diagnostic 2b. A large or rising value relative to `attributedOrders` means the cart-attribute write is failing: a theme change, or checkouts that skip the cart.
+- `sessions.*.triggered` uses the §1.3 trigger definition. Per-placement session counts add up to `placement=all` (first-trigger attribution, P1).
 - `lift` is `null` when `holdout.value == 0` or `holdout.n == 0`.
 - `degradedRequestShare` is `null` until G5 lands. The UI renders "not measured".
 - `servedFromShare` comes from `product_clicked.served_from` or `cost_telemetry`. It is optional in M1·2.
@@ -350,19 +434,20 @@ Ordered by impact on measurement. **G1–G3 block meaningful lift numbers**. M1�
 
 | # | Gap | Where | Effect on measurement | Proposed fix / owner |
 |---|---|---|---|---|
-| **G1** | **No cart attribute is ever written.** The widget only appends `?wg_session=` to rec-card hrefs (`src/attribution.ts`, `RecommendationCard.tsx`). Nothing calls `/cart/update.js`. | widget `main` | **Holdout orders can never be attributed** (no recs → no clicks → no marker). Conversion/RPS lift becomes "exposed vs ~0", which is meaningless and maximally flattering. | Widget: on first `widget_shown` per page, if the cart's `wg_session` attribute ≠ the current session id, `POST /cart/update.js {attributes:{wg_session:id}}`. Do it **identically for both arms**. The theme block can render `{{ cart.attributes.wg_session }}` into a data-attribute so steady state costs zero requests. Re-assert after checkout (the cart resets). `frontend-engineer`; privacy check by `security-and-privacy`, because the id becomes visible to the merchant in order "Additional details". |
+| **G1** | **No cart attribute is ever written.** The widget only appends `?wg_session=` to rec-card hrefs (`src/attribution.ts`, `RecommendationCard.tsx`). Nothing calls `/cart/update.js`. **Status at 0abf63d:** widget PR #17 is merged. It writes the attribute on the first `widget_shown`, before the bucket is known, for both arms. The R1 rename to `_wg_session` and the R2–R4 hardening (`decisions.md` 2026-10-14) are not yet on `main`: the code still uses `wg_session`. | widget `main` | **Holdout orders can never be attributed** (no recs → no clicks → no marker). Conversion/RPS lift becomes "exposed vs ~0", which is meaningless and maximally flattering. | Widget: on first `widget_shown` per page, if the cart's `wg_session` attribute ≠ the current session id, `POST /cart/update.js {attributes:{wg_session:id}}`. Do it **identically for both arms**. The theme block can render `{{ cart.attributes.wg_session }}` into a data-attribute so steady state costs zero requests. Re-assert after checkout (the cart resets). `frontend-engineer`; privacy check by `security-and-privacy`, because the id becomes visible to the merchant in order "Additional details". |
 | **G1b** | **The URL marker very likely never reaches the order.** Shopify `landing_site` is the first page of the storefront *visit*. Rec cards open a **new tab on the same origin** (same visit cookies), so the landing page stays whatever page the shopper entered on. `referring_site` is the external referrer, and the card also sets `rel="noreferrer"`. | backend extractor + widget | Exposed attribution is also near zero. That is consistent with the one staging order landing with `session_id = NULL`. | Verify on staging (order placed after a rec click, mid-visit). Expect G1 to be the only reliable channel. |
-| **G2** | **The marker source is not persisted.** `extractWgSession` checks note_attributes → landing_site → referring_site, but `orders_attributed` stores only `session_id`. | backend M1·1 | URL-marker attribution is exposed-only by construction. Mixing it in biases lift upward. | Add `attribution_source VARCHAR(16)` (`note_attribute|landing_site|referring_site`). Lift uses `note_attribute` only. `backend-engineer` (small Flyway migration, fits in M1·2). |
+| **G2** | **The marker source is not persisted.** `extractWgSession` checks note_attributes → landing_site → referring_site, but `orders_attributed` stores only `session_id`. | backend M1·1 | URL-marker attribution is exposed-only by construction. Mixing it in biases lift upward. | Add `attribution_source VARCHAR(16)` (`note_attribute|landing_site|referring_site`). Lift uses `note_attribute` only. `backend-engineer` (small Flyway migration, fits in M1·2). Under P3, lift tiles stay `insufficient_data` until this lands. |
 | **G3** | **The placebo is a "no matches" empty state**, not hidden or neutral (`widget.tsx`: `flow.view === "placebo"` → `RecommendationEmpty`). | widget | Measured effect = "recs vs a visible failure message". If the empty state frustrates shoppers or nudges them away, holdout conversion is depressed and **lift is overstated**. The spec allows "hidden or merchant static fallback". | PO/product-analyst: decide the placebo. Recommendation: a neutral collapse of the rec slot (no "no matches" copy), or the merchant's static fallback. Must be decided before the first pilot readout (**D6**). |
 | **G4** | **Events carry only the client clock.** `occurred_at` = widget `Date.now()`, and there is no server receive time. | backend events | Clock skew moves anchors relative to Shopify `created_at`, which drops or adds orders at the window edges and at `t₀`. | Add `events.received_at TIMESTAMPTZ NOT NULL DEFAULT now()` (backfill = `occurred_at`). The attribution join uses it. `backend-engineer`, in M1·2. |
 | **G5** | **The consent escape hatch is not implemented.** The widget never reads `Shopify.customerPrivacy`. The backend records no `attribution_mode`. `tenants.consent_mode_required` exists but nothing on the widget path consumes it. | widget + backend | Today every shopper is measured, including ones who denied consent (a compliance risk, not a bias). Once it ships, there is no way to report the degraded share. | Widget: implement the 2026-09-29 decision. Backend: count rec requests without a client session id per tenant/day (cost telemetry already has the hook). `security-and-privacy` to confirm. Not an M1·2 blocker. |
 | **G6** | **Test orders are not filtered.** The order mapper ignores Shopify `test: true`. Cancellations and refunds are not ingested. | backend M1·1 | Dev-store and test checkouts pollute pilot numbers. RPS is gross of refunds (symmetric noise, not bias, unless the widget drives returns). | Drop `test: true` at ingest, or persist `is_test` and filter. Refunds: accept at MVP and document as "gross revenue". |
 | **G7** | **`total_price` includes shipping and tax.** The spec says "revenue". | backend | Symmetric noise. It inflates AOV/RPS levels in absolute terms. | Accept at MVP, label "gross order value". Optionally persist `subtotal_price` (not PII) later. |
-| **G8** | **`/widget/v1/recommendations` does not enforce holdout server-side.** The placebo is enforced only in the widget. | backend recommendation | A stale CDN-cached widget build, a theme override or a bug could serve recs to holdout sessions. That is contamination: lift is biased toward 0. | Defence in depth: if `HoldoutAssigner.isHoldout(principal.sessionId)` is true, return an empty slate with `servedFrom="holdout"` (or 204), and count it as an integrity metric. `backend-engineer`, small. |
+| **G8** | **`/widget/v1/recommendations` does not enforce holdout server-side.** The placebo is enforced only in the widget. | backend recommendation | A stale CDN-cached widget build, a theme override or a bug could serve recs to holdout sessions. That is contamination: lift is biased toward 0. | Defence in depth: if `HoldoutAssigner.isHoldout(principal.sessionId)` is true, return an empty slate with `servedFrom="holdout"` (or 204), and count it as an integrity metric. This applies **with or without intent**, so it also covers the future pre-intent PDP request (§1.4). `backend-engineer`, small. |
 | **G9** | **`sessions` PK is `session_id` alone**, not `(tenant_id, session_id)`. | backend schema | A UUID collision across tenants (practically impossible with v4; possible with a forged id) would make the second tenant's session insert fail and drop that tenant's events silently. | Low priority. Make the PK composite at the next schema touch. |
 | **G10** | **The widget `holdout` flag is `false` for events queued before bootstrap.** | widget | **No effect.** The server correctly ignores it and uses `sessions.is_holdout`. Noted so nobody "fixes" the backend to trust the client. | None. |
-| **G11** | **Docs disagree:** `spec.md` (anchor on `product_clicked`, conversion "/ widget_shown", add-to-cart via `carts/update`), `decisions.md` ("engaged sessions"), `architecture.md` §9.3 (stale path). | docs | Builders will implement whichever doc they read first. | Fold the outcomes of D1–D3 into spec + architecture after PO approval. |
+| **G11** | **Docs disagree:** `spec.md` (anchor on `product_clicked`, conversion "/ widget_shown", add-to-cart via `carts/update`, CTR as a lift tile), `decisions.md` ("engaged sessions"), `architecture.md` §9.3 (stale path). `architecture.md` §10.2 step 3 says recs are fetched on viewport entry for every placement. The widget fetches only on intent submit, and the spec limits pre-intent recs to PDP. | docs | Builders will implement whichever doc they read first. | Fold the outcomes of D1–D3, and of P1–P3 once approved, into spec + architecture. §10.2 step 3 should say: pre-intent fetch only on mounts flagged `pre_intent_recs`, and holdout never fetches. Owner: product-analyst. |
 | **G12** | **`HoldoutAssigner` is unsalted**: the same UUID gets the same bucket in every future experiment. | shared | Fine for the single MVP holdout. A v2 A/B layer on the exposed arm must hash with a per-experiment salt, or it will correlate with the holdout split. | Note for the v2 bandit/experiments design. |
+| **G13** | **The pre-intent PDP path has no measurement hook yet.** (a) `widget_shown` has no `pre_intent_recs` flag, and the strict events schema would reject one. (b) `product_clicked` is sent only when `flow.lastPayload?.intent_mode` exists (`widget.tsx` `onCardClick`), so clicks on intent-less PDP recs would be dropped silently. | widget + backend events | No effect today, because the path does not exist. Shipping the 3-second auto-render without (a) biases `triggered` (§1.4). Without (b), diagnostics 2a/2b undercount. | Must ship **in the same release** as the auto-render (§1.4 sequencing gate). (a) Widget sets the flag from placement/config, before the bucket is known. Backend accepts the field and persists it as `events.pre_intent_recs BOOLEAN NOT NULL DEFAULT false`. (b) Send `product_clicked` with `intent_mode = null`, or a `context` value, for intent-less recs. Owners: `frontend-engineer` + `backend-engineer`. |
 
 ---
 
@@ -379,6 +464,9 @@ Ordered by impact on measurement. **G1–G3 block meaningful lift numbers**. M1�
 | **D7** ✅ decided 2026-10-14 (see decisions.md) | Show significant **negative** lift as red? (Spec only has green/grey.) | Yes. Honesty is the product. |
 | **D8** ✅ decided 2026-10-14 (see decisions.md) | Revenue definition: `total_price` (gross, incl. shipping/tax, pre-refund). | Accept for MVP and label it. Revisit with `subtotal_price` if merchants ask. |
 | **D9** ✅ decided 2026-10-14 (see decisions.md) | Day boundaries: UTC vs shop timezone. | UTC at MVP (the shop tz is not stored). Add `iana_timezone` from `shop/update` later. |
+| **P1** ACCEPTED by PO 2026-10-15 | Pre-intent PDP recs would make D2's `triggered` population depend on the treatment (§1.4). This is not happening in today's code, but it will once the spec'd 3-second auto-render ships. | **Accept.** A trigger is the first moment the arms can differ: `intent_submitted`, or `widget_shown` on a mount flagged `pre_intent_recs`. It is computed across placements, and the placement filter uses the session's first trigger. On that path the holdout keeps the identical hook and a collapsed, empty rec slot, with no rec call (D6). The auto-render must not ship without the flag (G13). This refines D2; it does not reverse it. |
+| **P2** ACCEPTED by PO 2026-10-15 | Widget CTR: lift tile (spec) vs integrity check (§2.1). | **Accept as integrity check.** Count engagement up to the first trigger only. A significant difference means broken instrumentation, not success. Remove the CTR lift tile from `spec.md`. |
+| **P3** ACCEPTED by PO 2026-10-15 | Orders matched only through the URL marker (§3.1, G2). | **Accept exclusion from lift.** Holdout can never produce such orders, so counting them flatters WiseGift. Keep them in diagnostic 2b and `urlOnlyAttributedOrders`. Lift tiles stay `insufficient_data` until G2 persists the marker source. |
 
 ---
 
@@ -387,6 +475,6 @@ Ordered by impact on measurement. **G1–G3 block meaningful lift numbers**. M1�
 1. **`LiftCalculator` unit tests** with hand-computed fixtures: proportions (matching a reference two-proportion z within 1e-6), the RPS mean with zeros, the AOV ratio with multi-order sessions, winsorisation at pooled P99, `m_H = 0` → null lift, and the SRM trigger.
 2. **Synthetic A/A integration test**: seed 20k sessions with an identical outcome distribution in both arms (seeded RNG). Over 200 seeds, the false-green rate should be ≈ 5% (within 3–7%). Run nightly, not per-PR, if it is slow.
 3. **Synthetic known-lift test**: seed +20% conversion in exposed at n large enough. Assert `significant_positive`, and assert the CI covers 0.20.
-4. **Bias regression tests:** (a) a holdout order whose only anchor is earlier than 7 days → not attributed; (b) an exposed order anchored only by `product_clicked` → **not** attributed (anchor symmetry); (c) a URL-sourced marker → excluded from lift once G2 lands; (d) an order before `t₀` → excluded.
+4. **Bias regression tests:** (a) a holdout order whose only anchor is earlier than 7 days → not attributed; (b) an exposed order anchored only by `product_clicked` → **not** attributed (anchor symmetry); (c) a URL-sourced marker → excluded from lift, and lift tiles are `insufficient_data` while `attributionSourceMixed` (P3); (d) an order before `t₀` → excluded; (e) **P1:** a holdout session whose only event is a `widget_shown` with `pre_intent_recs = true` is in `triggered`, with `t₀` = that event; (f) **P1:** a session with a flagged PDP `widget_shown` on day 1 and a `home_hero` `intent_submitted` on day 3 has `t₀` = day 1, is counted under `pdp_slot` only, and an order on day 2 is attributed; (g) **P2:** a `widget_engaged` after `t₀` does not count toward the CTR integrity check.
 5. **Two-tenant isolation test** per §6.3.
 6. **Every response logs** `metricVersion`. Any change to these definitions bumps it (`lift-v2`, …), so a past readout can be reproduced.
