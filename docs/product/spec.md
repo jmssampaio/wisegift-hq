@@ -71,6 +71,8 @@ As a merchant admin, I want a guided setup after install so that the widget is l
 - [ ] Step 5 — **Go live**: enabling the tenant flips `tenant.active = true`. From this moment the widget renders live for shoppers and events start being recorded.
 - [ ] The onboarding wizard is resumable — closing the browser and returning drops the merchant back at the incomplete step.
 
+> **DRAFT, pending PO review (2026-10-15):** Step 1 is proposed to become "What do you sell?" (Fashion / Home & Decor / General niche packs that pre-fill existing configuration). See [`hooks-and-packs.md`](hooks-and-packs.md) §3.4.
+
 ---
 
 ## Feature: Merchant onboarding — Catalog sync
@@ -121,6 +123,8 @@ As a widget shopper, I want a friendly question that helps the widget understand
 - [ ] Both flows share the same downstream API — the intent object carries an `intent_mode: "self" | "gift"` field.
 - [ ] The hook is skippable on PDP placements: if the shopper does nothing, the widget still shows recommendations based on the current product context after 3 seconds (fires a widget-shown event but no intent capture).
 - [ ] Widget copy is available in EN, ES, PT at MVP.
+
+> **DRAFT, pending PO review (2026-10-15):** per-placement hook layouts (`home_hero`, `collection_header`, `pdp_slot`, `gift_finder`, `floating`), with eyebrow / headline / subline copy, states, accessibility, theming and measurement constraints, are specified in [`hooks-and-packs.md`](hooks-and-packs.md) §2.
 
 ---
 
@@ -206,6 +210,8 @@ As a merchant admin, I want to control what the widget says and where it appears
 - [ ] Save persists to the tenant's widget config; changes propagate to live widgets within 5 minutes (config is fetched with the widget bundle and cached).
 - [ ] All fields are inline-validated.
 - [ ] Deep visual look-and-feel (colours, fonts, spacing, shadow) is handled in the **Merchant admin — Widget theming** feature; this screen links out to Theming rather than duplicating those controls.
+
+> **DRAFT, pending PO review (2026-10-15):** a "Store type" (niche pack) card, per-placement hook copy tabs (eyebrow / headline / subline) with live preview, and pack-driven intent-question labels are specified in [`hooks-and-packs.md`](hooks-and-packs.md) §3.
 
 ---
 
@@ -417,7 +423,7 @@ WiseGift is a **data processor** for the merchant's shopper data (pseudonymous s
 
 ## Roadmap — post-MVP (in likely priority order)
 
-1. **Verticalised intent parameter packs** — per-vertical intent forms (Fashion / Tech / Books / Beauty / Home) with merchant-editable style archetypes and reference imagery. Justifies the Growth-tier price step. See `docs/decisions.md` 2026-09-29 entry.
+1. **Verticalised intent parameter packs** — per-vertical intent forms (Fashion / Tech / Books / Beauty / Home) with merchant-editable style archetypes and reference imagery. Justifies the Growth-tier price step. See `docs/decisions.md` 2026-09-29 entry. *Precursor (DRAFT, pending PO review):* niche packs as starter presets over existing configuration only, in [`hooks-and-packs.md`](hooks-and-packs.md) §3; the configurable questionnaire and looks stay here (§6 Deferred there).
 2. **Purchase-outcome learning loop** — the event schema is MVP-ready; the learner (contextual bandit / preference model) lands here to compound per-tenant lift over time.
 3. **Analytics — deeper cuts** — per-placement funnel, per-intent-mode conversion, cohort analysis, exportable reports.
 4. **VTEX and SFCC integrations** — same core APIs, new adapter modules for catalog sync and order webhooks.

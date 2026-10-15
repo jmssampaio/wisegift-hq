@@ -1476,3 +1476,70 @@
   - Stores that already added the block may keep stale setting values in their theme JSON. The widget ignores them once the attributes are no longer read.
   - `product-analyst` to update `spec.md` / `architecture.md` (hook-copy precedence, Theme App Extension settings).
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-15 — Staging: admin config reaches the widget; G5 consent test partially run
+- Context: widget PR #21 deployed as app version `wisegift-staging-14` (from `main` `4055880`). Backend PR #72, the admin session serialization fix, was merged and deployed; admin login works on staging.
+- Verified by the PO on staging:
+  - Admin Configuration changes reach the storefront: the hook copy ("Wise Assistant") and the brand accent colour arrive in the bootstrap `config` and render.
+  - G5 scenario B (shopper accepts):
+    - The session is minted (`isHoldout=false`), and `wg_session` is persisted for 30 days.
+    - `_wg_session` on the cart matches the session id.
+    - An `intent_submitted` event was posted with the same session id.
+- Not yet verified (deferred by the PO):
+  - **Scenario A (decline in a fresh browser)** is **inconclusive**. Chrome incognito windows share storage and the `_tracking_consent` cookie while any incognito window is open, so the "Accept" from scenario B carried over. `analyticsProcessingAllowed()` returned `true`.
+  - **Scenario C (withdraw after accepting)** is **inconclusive**. After Decline the stored id remained, but the post-decline `analyticsProcessingAllowed()` value was not captured. A widget bug is not yet ruled out.
+  - **Scenario D (banner ignored)** was not run.
+  - Re-run A, C and D with all incognito windows closed before each run, capturing `analyticsProcessingAllowed()` / `currentVisitorConsent()` after each choice.
+- Finding: **the dev store's cookie banner was off.**
+  - Before the PO enabled it, `shouldShowBanner()` was `false` for region `ESCT`, and `analyticsProcessingAllowed()` returned `true` with no choice recorded. With the banner off, the widget tracks EU shoppers, as G5 is designed to (it obeys the storefront signal).
+  - **So EU compliance depends on the merchant's banner configuration.** Proposal (pending PO): add "cookie banner enabled for EU" as a mandatory item in the pilot onboarding checklist. `security-and-privacy` to confirm that `consent-position.md` states this merchant responsibility.
+- Made by: Product Owner (advised by claude)
+
+## 2026-10-15 — Hooks per placement and niche packs (scope simplified); social/looks deferred
+- Context: the PO wants the product to be friendlier and easier to sell. Ideas, from PO mockups (Design canvas "WiseGift widget mockups"):
+  1. a different hook UI per page type;
+  2. niche packs (Fashion, Home & Decor) that content creators can parameterise, e.g. look and decor ideas;
+  3. social content: influencer Instagram posts and Pinterest decor images.
+
+  claude advised splitting by risk and cost. The PO chose the simplest, highest-value items first.
+- Decision, in scope now (spec: `docs/product/hooks-and-packs.md`, DRAFT by `product-analyst`):
+  1. **Per-placement hook layouts** for `home_hero`, `collection_header`, `pdp_slot`, `gift_finder` and the floating trigger.
+     - Merchant-editable eyebrow, headline and subline per placement.
+     - The self/gift choice buttons stay fixed, because they define the measured intent mode.
+     - No new events. The hook is identical in both arms, and no recs appear before intent (P1/G13).
+  2. **Niche packs as starter presets:** Fashion, Home & Decor, General.
+     - A pack pre-fills only existing configuration: per-placement copy, labels and option order of the existing intent fields, budget bands, and a suggested look.
+     - Pack values are fallback defaults and never overwrite merchant edits.
+     - No new question types and no ranking change.
+- PO answers to the open questions:
+  - **Q-P4 / Q-R1 (Fashion department):** ship Fashion **without** a department question; the copy invites "who it's for" in the free-text field.
+    - **Next step (agreed):** a "Who is it for?" question whose options are **merchant-selected Shopify collections**, named by the merchant, applied as a hard collection filter.
+    - Why: departments differ per brand (Women/Men/Kids, Baby/Girls/Boys by age, women-only brands…), so a fixed list is wrong. A collection filter is simple for the ranker.
+    - The same mechanism later serves Home & Decor ("Which room?").
+  - **Q-P2:** yes. Floating-trigger copy, mode, position and colours move from the theme block to the admin, consistent with the 2026-10-15 "admin is the single source of truth" decision.
+  - **Q-P9:** packs on **all plans** during the pilots. Revisit with `marketing-manager` when pricing is set.
+  - **Q-P6:** **European Portuguese, informal "tu"**, for PT copy.
+  - Still open: Q-P1 (floating default; spec recommends keeping the side tab, with the mockup pill as an option), Q-P3, Q-P5, Q-P7, Q-P8, plus the technical questions owned by backend-engineer, recommendations-specialist and frontend-engineer (spec §5).
+- Mockup changes accepted from the spec's §7:
+  - no web font (Manrope); inherit the store fonts
+  - accent-filled primary buttons
+  - contrast fixes
+  - honest PDP subline (no "check it's the right pick")
+  - "A few quick questions" instead of "3 quick questions"
+- **Deferred:**
+  - **Configurable questionnaire and "looks" defined by images plus example products.** Needs ranking work; owner recommendations-specialist.
+  - **Social content.** Phased:
+    1. the merchant's own images, plus posts from **contracted influencers** uploaded as files;
+    2. the merchant's own Instagram account;
+    3. automatic import of creator posts, only if the platform APIs allow it.
+
+    Preconditions for any third-party image:
+    - the merchant warrants its rights (terms + DPA clause);
+    - licence scope and expiry are recorded, with auto-unpublish on expiry;
+    - a takedown process;
+    - no face or biometric processing; image analysis only for products;
+    - any vision sub-processor added to the list.
+
+    `security-and-privacy` drafts, then attorney review. Crediting the @handle is not permission.
+  - **Mockup images:** real Instagram or Pinterest images may be used only internally. Use licensed stock or the merchant's own images in anything shown externally.
+- Made by: Product Owner (advised by claude, product-analyst)
