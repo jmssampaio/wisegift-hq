@@ -1567,3 +1567,28 @@
   - Pending PO approval: backend hardening before the pilot (CSRF cookie `Secure`/`SameSite` explicit; `changeSessionId()` on login and signup; stop anonymous `/me` probes from creating Redis sessions).
   - Next check: a fresh install on a new dev store (runbook step 7). It must confirm whether signup opens top-level or inside the Shopify admin iframe, which decides the urgency of the embedded-admin (App Bridge) auth decision.
 - Made by: Product Owner (advised by claude, devops-expert)
+
+## 2026-10-15 — Embedded admin auth: Shopify session tokens (Option A); platform identity as a separate layer
+- Context: the merchant admin runs inside the `admin.shopify.com` iframe (`embedded = true`). There the cross-site frame never receives the `SameSite=Lax` session and XSRF cookies, so the current email/password + Spring Session + CSRF model cannot work embedded. Proposal: `docs/engineering/embedded-admin-auth-proposal.md` (security-and-privacy).
+- Decisions (PO accepted all 8):
+  1. **Option A: Shopify session tokens only.**
+     - App Bridge `shopify.idToken()` is sent as `Authorization: Bearer` on every admin call.
+     - The backend verifies the JWT (app secret, `aud`, `dest`, `exp`/`nbf`) and derives the tenant **only** from the verified shop claim.
+     - Rejected B (`SameSite=None; Partitioned` cookies): it fails by default in Safari and in Chrome Incognito, and risks App Store review.
+     - Rejected C (hybrid): two auth models for a standalone user who does not exist at MVP.
+  2. **Install via Token Exchange.** `application_url` points at the admin, and the first authenticated call obtains the offline token and provisions the tenant. This retires the invite-token / signup flow (backend #73, admin #4).
+  3. **No standalone admin** until VTEX/SFCC is scheduled.
+  4. **No merchant-staff personal data stored at MVP:** no emails, password hashes or Google identities, and no Shopify user-ID audit log.
+  5. **Merchant contact email** is collected explicitly in onboarding, pre-filled from the shop email. It is needed for DPA breach notices and billing; the attorney words the notice.
+  6. **The fresh-install test moves to the end of Phase 1.** No pilot installs before Phase 1 lands.
+  7. **No further cookie hardening.** #76 stays until Phase 2 removes the cookie-session code.
+  8. **Platform identity is a separate layer.**
+     - A platform-identity verifier interface turns a platform credential into the platform-agnostic `AdminPrincipal`. Shopify session tokens are the first implementation.
+     - All admin APIs, tenant isolation and business rules stay platform-agnostic.
+     - VTEX and SFCC add their own verifiers later. SFCC may need a standalone WiseGift login: the retired cookie/invite code is recoverable from git history and from this log.
+     - Phase 2 removes the unused cookie-login code rather than keeping it dormant.
+- Risks and notes:
+  - **The Shopify app client secret becomes the master key** for every tenant's admin access. It stays backend-only, and rotation must accept the previous key during a grace window.
+  - Shopify facts S1–S6 in the proposal were stated from memory and must be verified against the official docs, and the code paths re-checked on `origin/develop`, before building (open question B1).
+- Next: `backend-engineer` verifies S1–S6 and the current code, then writes a Phase 1 implementation plan (document only).
+- Made by: Product Owner (advised by claude, security-and-privacy)
