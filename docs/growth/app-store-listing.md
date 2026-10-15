@@ -76,4 +76,62 @@ Claims that need Product Owner sign-off before this ships:
 - **App name registration** — "WiseGift" needs to be confirmed available in the App Store; if a conflict exists we may need to list as "WiseGift Recommendations" or similar. Not a marketing decision — flag to PO.
 - **Screenshots and app icon** are not in this doc. They are a separate deliverable requiring the widget UI to be built enough to screenshot in a real merchant theme (per `spec.md` Widget theming — live-preview panel is the natural source).
 - **Pricing tier descriptions** for the listing pricing block are deferred until the pricing thesis in `gtm-b2b.md` is closed (post-pilot).
-- **Data-processing summary** for the listing — required by Shopify. Owned by `security-and-privacy`, not marketing.
+- **Data-processing summary** for the listing — required by Shopify. Owned by `security-and-privacy`, not marketing. Draft answers below.
+
+## DRAFT — Protected customer data (PCD) and data-processing answers
+
+> *DRAFT — pending PO + attorney review.* Owned by `security-and-privacy`.
+> This is informational only and not legal advice. The answers are keyed
+> to the requirement topics as we understand them. Map them to the live
+> Shopify questionnaire wording at submission time; we have not checked
+> them against current Shopify docs.
+>
+> **Items marked [NOT YET TRUE] must not be submitted until the work
+> ships.**
+
+- **Data accessed:**
+  - Orders (`read_orders`) at protected customer data **level 1** only.
+  - No level-2 fields (name, email, phone, address) are requested or
+    stored. They are dropped at the webhook receiver before persistence
+    or logging (`decisions.md` 2026-10-14).
+- **Purpose:** analytics. Orders are attributed to anonymous widget
+  sessions to measure the merchant's recommendation lift against a
+  10% holdout.
+- **Data written to Shopify:**
+  - The storefront widget sets a cart attribute `_wg_session`, a random
+    UUID, on the visitor's cart. Shopify copies it onto resulting orders.
+  - No other customer or order data is written.
+- **Minimisation:** we store order ID, line items (product ID, quantity,
+  price), total, currency, creation date and the session marker. Nothing
+  else from the order is stored.
+- **Consent:** **[NOT YET TRUE — widget PR #19
+  `feature/g5-consent-gating`, open, not merged]**
+  - The shopper's own choice (Customer Privacy API
+    `analyticsProcessingAllowed()`) decides.
+  - Without consent, no identifier, cart attribute or events, and any
+    earlier ones are cleared.
+  - Where no consent API is available, a tenant setting applies. It
+    defaults to "consent required", which fails closed.
+- **Retention:**
+  - Order rows: 18 months **[purge NOT YET BUILT — M3·1]**.
+  - Session and event rows: 120 days; the session identifier is removed from order rows at 120 days (decision D5, 2026-10-14; purge job M3·1 not yet built).
+  - All tenant data is purged 30 days after uninstall.
+- **Security:**
+  - EU hosting for storage and compute.
+  - Encrypted at rest and in transit.
+  - Tenant-isolated database.
+  - Webhooks HMAC-verified.
+- **Third parties:**
+  - Data is not sold.
+  - Sub-processors are listed in `docs/legal/sub-processors.md`.
+  - OpenAI receives the shopper intent payload, including optional free
+    text, and catalog texts, with no session ID.
+  - OpenAI is currently on the US endpoint. A move to an EU
+    data-residency project was decided on 2026-10-14 and has not been
+    switched yet.
+  - A "Don't include personal details" notice on the free-text field is
+    planned, not shipped.
+- **Compliance webhooks:** `customers/data_request`, `customers/redact`
+  and `shop/redact` **[NOT YET BUILT — M3·2]**. When built, they must map
+  the listed orders to their `session_id` and export or delete the linked
+  session and event rows.
