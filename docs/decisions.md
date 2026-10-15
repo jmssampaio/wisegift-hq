@@ -1543,3 +1543,27 @@
     `security-and-privacy` drafts, then attorney review. Crediting the @handle is not permission.
   - **Mockup images:** real Instagram or Pinterest images may be used only internally. Use licensed stock or the merchant's own images in anything shown externally.
 - Made by: Product Owner (advised by claude, product-analyst)
+
+## 2026-10-15 — Admin on staging (Render Free, Frankfurt); backend Blueprint branch incident; develop → main promotion #74
+- **Admin staging is live** at `https://wisegift-admin-staging.onrender.com`. Admin PR #5 is merged; the service was created from that repo's `render.yaml` Blueprint.
+  - Render web service, Node runtime, region Frankfurt, **Free plan**.
+  - Why Free: the PO decided on zero spend while there are no pilots. A cold start after about 15 min idle takes 30–60 s.
+  - **Switch to Starter (USD 7/month) before the first pilot merchant installs.**
+  - Same region and sub-processor as the backend, so no DPA change. Vercel was rejected: it would be a new US sub-processor, its rewrites and build logs run outside the EU, and Hobby is non-commercial.
+  - Runbook: `docs/engineering/runbooks/admin-staging-deploy.md`.
+- Backend PR #73 (invite flow) merged. `WISEGIFT_ADMIN_SIGNUP_URL=https://wisegift-admin-staging.onrender.com/signup` is set on the backend staging service.
+- **Incident:**
+  - Symptoms: after the merges, staging kept serving pre-#71 code. There was no `XSRF-TOKEN` cookie, so every admin POST returned 401, and `/admin/signup` still showed the old placeholder.
+  - Cause: the backend's `render.yaml` declares `branch: main`, and the Blueprint sync had switched the staging service to `main`.
+  - The PO promoted `develop` → `main` (PR #74, `9412062`), which redeployed staging with #71–#73.
+  - Verified after the deploy:
+    - `XSRF-TOKEN` is set again;
+    - `/admin/signup?token=…` returns 302 to the admin `/signup`;
+    - the PO logged in through the staging admin.
+- Follow-ups:
+  - `devops-expert`: fix the backend `render.yaml` to `branch: develop`, so staging follows `develop` again (release-process.md: `develop` → staging, `main` → production). Until then, `develop` merges reach staging only through a promotion to `main`.
+  - `#74` counts as a production promotion under the process. No production service exists yet, so there is no impact; recorded for history.
+  - **Process:** a PR with a deploy prerequisite (env var, infra) carries a **[DO NOT MERGE]** title prefix until the prerequisite is done, not only a note in the body.
+  - Pending PO approval: backend hardening before the pilot (CSRF cookie `Secure`/`SameSite` explicit; `changeSessionId()` on login and signup; stop anonymous `/me` probes from creating Redis sessions).
+  - Next check: a fresh install on a new dev store (runbook step 7). It must confirm whether signup opens top-level or inside the Shopify admin iframe, which decides the urgency of the embedded-admin (App Bridge) auth decision.
+- Made by: Product Owner (advised by claude, devops-expert)
