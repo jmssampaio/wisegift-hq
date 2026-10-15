@@ -1592,3 +1592,33 @@
   - Shopify facts S1–S6 in the proposal were stated from memory and must be verified against the official docs, and the code paths re-checked on `origin/develop`, before building (open question B1).
 - Next: `backend-engineer` verifies S1–S6 and the current code, then writes a Phase 1 implementation plan (document only).
 - Made by: Product Owner (advised by claude, security-and-privacy)
+
+## 2026-10-15 — Embedded admin auth Phase 1 plan accepted; PO-1..PO-5 and rotation guard
+- Context: `backend-engineer` verified the proposal against `origin/develop` and the official Shopify docs, then wrote `docs/engineering/embedded-admin-auth-phase1-plan.md`. Option A is confirmed and strengthened: App Store requirement **1.1.1** mandates session-token auth with no reliance on third-party cookies, and Built for Shopify 3.1.3 forbids an extra sign-up.
+- New facts that change scope:
+  - New public apps must use **expiring offline tokens** (1 h, with a rotating 90-day refresh token). All public apps lose non-expiring tokens on **2027-01-01**; custom apps are exempt.
+  - The **REST Admin API is legacy**: new public apps must use GraphQL only.
+- Bugs found in current code, to be fixed in BE-2:
+  - a reinstall within 30 days leaves the tenant soft-deleted;
+  - `completeInstall` is not transactional, so a concurrent first install creates two tenants;
+  - `custom_domain` is always null at install.
+- Decisions (PO accepted all 6):
+  1. **PO-1:** defer expiring offline tokens to the REST→GraphQL migration. Phase 1 requests non-expiring tokens and fails loudly if Shopify returns an expiring one.
+     - **Precondition:** the PO checks in the Dev Dashboard whether the staging app is custom or public distribution. If it is public, revisit.
+  2. **PO-2:** accept the new `/me` shape. The `admin { id, email }` block goes away in Phase 2.
+  3. **PO-3:** a reinstall within 30 days reactivates the tenant with `active=false` and keeps its configuration. The merchant re-places the widget blocks, because Shopify removes theme blocks on uninstall.
+  4. **PO-4:** a confirmed merchant contact email is required before go-live. `product-analyst` adds the acceptance criterion and the architecture.md §8 columns; the attorney words the notice.
+  5. **PO-5:** decision 1 of the embedded-auth entry rests primarily on App Store requirement 1.1.1. The Safari/CHIPS argument is secondary, since Safari has supported CHIPS since 26.2 but still blocks third-party cookies by default.
+  6. **Rotation guard before the first pilot:** a "credential invalid" flag or re-pin task, so a client-secret rotation doesn't silently break catalog sync (risk R6).
+- PR plan: BE-1 → BE-2 → BE-3 / BE-5 (BE-6 optional); ADM-1..3; WID-1; OPS-1; then the fresh-install E2E (plan §10). Effort: Phase 1 ≈ 11–13 dev-days.
+- Started 2026-10-15: **BE-1** (platform identity + Shopify ID-token verifier + stateless bearer chain) and, in parallel, **M1·2** (lift join + KPI service).
+- MVP status review 2026-10-15 (claude). Still pilot-blocking:
+  - embedded auth Phase 1;
+  - M1·2 lift;
+  - M2·3 onboarding;
+  - M2·6 analytics dashboard;
+  - M3·1 30-day hard purge;
+  - M3·4 attorney DPA review (not started; longest lead time);
+  - V7 consent backfill;
+  - OpenAI EU switch.
+- Made by: Product Owner (advised by claude, backend-engineer, security-and-privacy)
