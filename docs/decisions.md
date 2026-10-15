@@ -1421,3 +1421,23 @@
   - **P3, URL-marker orders.** Orders matched only through the URL marker are **excluded from lift**, because holdout can never produce them. They still count in exposed-only diagnostics and in `integrity.urlOnlyAttributedOrders`. Until G2 (persisting the attribution source) ships, mixed sources force lift tiles to `insufficient_data`.
 - Follow-up: `product-analyst` to align `spec.md` and `architecture.md` wording (the 3-second PDP criterion, §10.2 step 3, the CTR tile).
 - Made by: Product Owner (advised by claude, recommendations-specialist)
+
+## 2026-10-15 — Staging E2E: order attribution verified; findings from the PO's test run
+- Context: the PO tested the merged code on staging. Backend `develop` deployed (V6 applied); widget app version `wisegift-staging-12` from `main` `31b495a`.
+- Verified:
+  - Widget session bootstrap works, and `_wg_session` is written to the cart.
+  - Order `6774482567227` (#1008, storefront checkout via cart) was persisted with `session_id = 9c3cdbae-…` (exposed arm, `attributed=true`).
+- Findings (follow-ups, not yet scheduled):
+  1. **The marker is written only on `widget_shown`.** After a completed checkout Shopify starts a new cart, so a shopper who saw the widget earlier and buys without seeing it again loses attribution, even inside the 7-day window (order #1007 case).
+     - Proposal: on every page where the bundle loads, re-write `_wg_session` when a persisted session id exists, independent of `widget_shown`. Symmetric across arms and consent-gated by G5.
+     - Owner: `frontend-engineer`; `recommendations-specialist` to confirm against the D3 anchor.
+  2. **Buy it now / accelerated checkout drops cart attributes.** This is a known Shopify behaviour, so those orders can't be attributed.
+     - Document it as a measurement limitation in M1·2. Holdout is affected symmetrically.
+  3. **Out-of-stock rule ignores `inventory_policy = continue`.**
+     - `variantAvailable()` treats tracked quantity ≤ 0 as unavailable, even when the merchant keeps selling out of stock.
+     - Owner: `backend-engineer`.
+  4. **Admin has no invite-signup screen.** The first admin user has to be created through the API with the invite token.
+     - Needed before the first pilot (M2·3 onboarding). Owner: `frontend-engineer`.
+  5. **Widget tests need Node ≥ 20.19 / 22.12.** The PO's default Node is 22.9. Separately, `npm ci` can skip `@rolldown/binding-darwin-arm64`, a known npm optional-dependency bug.
+     - Add `.nvmrc` and an `engines` field. Owner: `devops-expert`.
+- Made by: Product Owner (advised by claude)
