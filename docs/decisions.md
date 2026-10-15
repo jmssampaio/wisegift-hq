@@ -1441,3 +1441,38 @@
   5. **Widget tests need Node ≥ 20.19 / 22.12.** The PO's default Node is 22.9. Separately, `npm ci` can skip `@rolldown/binding-darwin-arm64`, a known npm optional-dependency bug.
      - Add `.nvmrc` and an `engines` field. Owner: `devops-expert`.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-15 — Merchant admin is the single source of truth for widget configuration (supersedes 2026-10-07 precedence step 2a)
+- Context: in the staging test the PO saved a new "Default hook copy" in the admin (Configuration), and the storefront did not change. Two causes:
+  1. **The widget never consumes the bootstrap `config`.** `POST /widget/v1/session` returns `copy`, `copyForPlacement`, `themeTokens`, `brandAccentColor` and `borderRadiusPx`. The widget types them but never applies them, so no admin Configuration or Theming setting reaches the storefront.
+  2. **The Theme App Extension block ships non-empty defaults** for `hook_copy` ("Thinking about this as a gift? Let's find the right pick.") and `brand_accent_color` (`#6c47ff`). Under the 2026-10-07 precedence (theme block wins, step 2a), these would always override the admin, even with cause 1 fixed.
+- Decision: **the WiseGift merchant admin is the single source of truth** for widget copy and appearance:
+  - hook copy, global and per placement
+  - theme tokens
+  - brand accent colour
+  - border radius
+
+  The Shopify theme editor is used **only for placement** (where the block sits on the page).
+  - Remove the `hook_copy` and `brand_accent_color` settings from the theme block. Replace them with an informational note pointing to the WiseGift admin.
+  - The widget no longer reads `data-hook-copy` / `data-brand-accent-color`.
+  - Hook copy precedence becomes:
+    1. `placement_hooks[placement]`
+    2. `hook_copy`
+    3. the backend per-placement default
+    4. the generic fallback
+
+    The backend resolves this chain and returns it as `copyForPlacement`. The widget falls back to `copy`, then to its built-in default.
+  - The widget applies the admin theme tokens from the bootstrap `config`, validated, layered per architecture.md §10.5.
+- Why:
+  - **Theme-block settings are per theme and per block instance.** They are lost or duplicated when a merchant switches themes, duplicates a theme, or places several blocks.
+  - **The backend can't see them**, so M1·2 can't attribute outcomes to the copy actually shown.
+  - **They don't exist on VTEX / SFCC.** One admin keeps configuration platform-agnostic.
+  - **The admin can offer** live preview, contrast checks, presets and undo, and later copy experiments.
+  - **Two configuration surfaces produce silent conflicts**, which is exactly what happened in this test.
+  - **The 2026-10-07 entry already anticipated this:** "flip to backend-wins once we have an admin dashboard". That admin now exists (M2·4/M2·5).
+- Merchant familiarity with configuring inside Shopify is addressed by the **embedded admin** (App Bridge; pending embedded-auth decision), which is also a "Built for Shopify" requirement.
+- Consequences:
+  - Widget PR (`frontend-engineer`, targets `main`), then `shopify app deploy`. No pilots exist yet, so no merchant is affected.
+  - Stores that already added the block may keep stale setting values in their theme JSON. The widget ignores them once the attributes are no longer read.
+  - `product-analyst` to update `spec.md` / `architecture.md` (hook-copy precedence, Theme App Extension settings).
+- Made by: Product Owner (advised by claude)
