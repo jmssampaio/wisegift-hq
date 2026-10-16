@@ -478,3 +478,76 @@ Ordered by impact on measurement. **G1–G3 block meaningful lift numbers**. M1�
 4. **Bias regression tests:** (a) a holdout order whose only anchor is earlier than 7 days → not attributed; (b) an exposed order anchored only by `product_clicked` → **not** attributed (anchor symmetry); (c) a URL-sourced marker → excluded from lift, and lift tiles are `insufficient_data` while `attributionSourceMixed` (P3); (d) an order before `t₀` → excluded; (e) **P1:** a holdout session whose only event is a `widget_shown` with `pre_intent_recs = true` is in `triggered`, with `t₀` = that event; (f) **P1:** a session with a flagged PDP `widget_shown` on day 1 and a `home_hero` `intent_submitted` on day 3 has `t₀` = day 1, is counted under `pdp_slot` only, and an order on day 2 is attributed; (g) **P2:** a `widget_engaged` after `t₀` does not count toward the CTR integrity check.
 5. **Two-tenant isolation test** per §6.3.
 6. **Every response logs** `metricVersion`. Any change to these definitions bumps it (`lift-v2`, …), so a past readout can be reproduced.
+
+---
+
+## Clarifications 2026-10-16 — acknowledged by PO 2026-10-16 (C1–C9; P4 accepted)
+
+> Owner: `recommendations-specialist`. These answer the seven questions
+> `backend-engineer` raised while implementing PR 1 of M1·2
+> (`wisegift-backend@feature/m1-2-lift-measurement`, 6959e8b), plus findings from
+> reading that implementation. This section is append-only. Where it conflicts
+> with an earlier section, this section wins **once the PO acknowledges it**.
+> Until then the earlier text stands. C1–C7 are clarifications. C8 is a new
+> rule and needs an explicit PO decision (**P4**).
+> `metricVersion` stays `lift-v1`: nothing has been published under it yet.
+
+### C1. Variance convention: keep n−1 (§5.1 wins over §10.1)
+- The engine uses the sample variance `s² = (Σy² − n·m²)/(n−1)` for every mean KPI, binary ones included.
+- §5.1's sentence "for 0/1 data this *is* the unpooled two-proportion z-test" should read "**equals it up to a factor of sqrt((n−1)/n)**". The n−1 version gives a z that is very slightly smaller, so it is slightly conservative.
+- At the 500-holdout floor the gap is 0.1% of z. Example: a textbook z of 1.962 becomes 1.960. That cannot change a decision in practice.
+- §10.1 is corrected. The reference for "proportions within 1e-6" is the unpooled z computed with `p̂(1−p̂)/(n−1)` per arm. Agreement with the textbook `p̂(1−p̂)/n` z is asserted only up to that factor. The existing pinned test is correct.
+- Why: one variance formula for 0/1 and revenue data keeps a single engine, and the CSV reproduces it in one line of SQL (`var_samp`).
+
+### C2. Orders ingested before V7 (unknown marker source)
+- **Accept the current behaviour. Do not backfill.** The marker source of a pre-V7 row cannot be recovered honestly, because the raw webhook payloads are not kept. Guessing the source by date would be invented data.
+- **Narrow the trigger.** `attributionSourceMixed` is set only when an UNKNOWN-source order is **attributed to a session of the selected population**. It is no longer set for any marked order loaded for the range. An unknown order that cannot affect the numbers should not grey out the tiles.
+- Effect: only tenants with orders from before V7 are affected, for at most one 90-day range plus the 7-day tail after V7 deploys. Today that is staging only. If a production tenant already has marked orders from before V7, the same rule applies to it, and the PO should be told before its first readout.
+
+### C3. Clock tolerance also applies at t₀
+- The rule `o.created_at >= t₀(s)` becomes `o.created_at >= t₀(s) − 10 min`, using the same interim tolerance as the anchor (§3.2). It is removed or revisited when G4 lands.
+- Why: a client clock that runs fast moves `t₀` later than the real order time. That mostly drops orders placed within minutes of the trigger. Fast "click a rec, then buy" orders happen mostly in the exposed arm, so without the tolerance lift is **understated**. The tolerance does admit genuinely pre-trigger orders up to 10 minutes early, but those happen equally in both arms. They add noise, not bias.
+
+### C4. The under-200-orders rule covers revenue KPIs only
+- Confirmed. Below 200 eligible attributed orders (pooled), `sufficientData=false` applies to **revenue per session and AOV**, not to conversion.
+- Why: the rule protects the P99 revenue cap. Conversion does not use revenue, and the "≥ 30 converting sessions per arm" floor already protects it.
+
+### C5. Scope of SRM and the A/A checks
+- "For each population" (§4.4) means **compute SRM on both `shown` and the selected population**, with the same placement filter. If either fails (p < 0.001), every lift flag degrades to `insufficient_data`.
+- API: `integrity.srm` keeps describing the selected population. A new `integrity.srmShown` has the same shape. When `population=shown`, the two are identical.
+- Also, a failed A/A integrity check (`widget_ctr` or `trigger_rate`, p < 0.01) degrades every lift flag to `insufficient_data`, exactly like SRM.
+- Why: SRM on `shown` is the most direct detector of holdout `widget_shown` events being lost, and a uniform loss leaves the CTR and trigger-rate *ratios* unchanged. A broken-instrumentation signal that does not stop a green tile is not a guardrail. The cost is a false-alarm rate of about 2–3% per readout, which is acceptable.
+
+### C6. Diagnostic definitions: both confirmed
+- **Rec purchase rate (2b).** The denominator is triggered exposed sessions. The numerator counts a session when an order attributed under the 7-day rule (any marker source including URL and UNKNOWN, any currency) contains a product the session clicked **no later than the order time + 10 min**. A click after the order cannot have caused it. The 10 minutes are the same clock tolerance as C3.
+  - Make sure product-id formats match: `events.platform_product_id` (from the widget) and the line-item product id (from Shopify REST) must both be the numeric id string, not a GID. Otherwise 2b reads zero without any error.
+- **Coverage.** `attributedOrders` = orders placed in `[from, to)` that carry a session marker from any source, including orphans and other currencies. It describes how much of the store the marker reaches; it is not a lift denominator. `urlOnlyAttributedOrders` shows separately how much of that coverage lift cannot use.
+
+### C7. Line-item JSON key
+- `architecture.md` §8 (`orders_attributed.line_items`) should say **`platformProductId`** (camelCase), which is what is actually stored: `[{platformProductId, quantity, price}, …]`.
+- The read-model SQL may keep accepting `platform_product_id` as a harmless fallback.
+- Why: the stored rows are the real contract. Renaming the key would need a JSONB rewrite migration and gives no measurement value.
+- Related point on the event wire: the field is `preIntentRecs` (camelCase, like every other event field), stored as `events.pre_intent_recs`. Where §1.4/G13 write `pre_intent_recs: true` on the event, the widget must send `preIntentRecs`.
+
+### C8 (P4, PROPOSED). The cohort is the session's *first-ever* entry, not its first entry inside the range
+**Issue.** §1.3 defines `t₀` as the first trigger *inside the range*. A session that was triggered, and therefore treated, *before* `from` and returns during the range joins the range's cohort as if it were new. Whether it returns, and whether it triggers again, can depend on what it was shown the first time. Example: an exposed shopper who liked the recs comes back. A holdout shopper who saw an empty slot either retries the form or leaves. That selects the two arms differently after treatment, the same kind of problem P1 fixed across placements. The bias grows with the share of returning sessions, and it is largest on 7d/14d ranges. `wg_session` lasts 30 sliding days, so many sessions do return. The direction is unknown.
+
+**Rule (proposed).**
+- A session belongs to population P for range `[from, to)` only if its **first-ever** entry into P falls inside the range. That is the first `widget_shown` for `shown`, and the first trigger for `triggered`.
+- "First-ever" is checked over a fixed **30-day lookback** `[from − 30 d, from)`. The lookback matches the sliding UUID lifetime and fits D5's 120-day retention at the 90-day maximum range.
+- A session that entered earlier belongs to the earlier range's cohort. It is not re-counted later.
+- A session that was only *shown* before `from` (never triggered) can still enter `triggered` in range. It was never treated.
+
+**Why it is unbiased.** The first-ever entry happens before any treatment, so membership is decided before the arms can differ.
+
+**Cost.** Smaller n per range, because returning sessions from earlier ranges are dropped. Readouts get slower, mostly on short ranges.
+
+**Side benefit.** Every session belongs to exactly one cohort day. The trend points and the future `analytics_kpi_daily` rows then add up to session counts for a range.
+
+**Residual.** Sessions active continuously for more than 30 days before `from` can slip through. That is rare and is accepted.
+
+**Recommendation: accept and implement in PR 1**, so `lift-v1` is never published with the flaw. Add a §10.4 regression test: a session triggered on day −3 and again on day 2 is **not** in the cohort for a range that starts on day 0.
+
+### C9. Spec items not yet implemented in PR 1 (to track, not new rules)
+- **§3.1.5 / G6, test orders.** They are not filtered: the Shopify `test` flag is ignored at ingest. This is not just noise. A merchant QA-ing the widget on a live store is exposed 90% of the time and tends to buy the recommended product, so test orders bias lift **upward** on small pilots. **This must land before the first pilot readout.**
+- **G4, `events.received_at`.** It is not in V7. The 10-minute tolerance (C3) stays until it lands. Confirm that it is planned for PR 2 of M1·2.

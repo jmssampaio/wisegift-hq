@@ -1622,3 +1622,23 @@
   - V7 consent backfill;
   - OpenAI EU switch.
 - Made by: Product Owner (advised by claude, backend-engineer, security-and-privacy)
+
+## 2026-10-16 — M1·2 clarifications C1–C9 acknowledged; P4 (first-entry cohort) accepted; test orders filtered before first readout
+- Context: `recommendations-specialist` answered the seven questions `backend-engineer` raised while implementing PR #78 (M1·2 PR 1/2). The answers are recorded in `docs/engineering/m1-2-lift-measurement.md` "Clarifications 2026-10-16". The same review found two bias risks in the implementation.
+- Acknowledged by the PO:
+  - **C1:** keep the n−1 variance. §10.1 is corrected to match §5.1.
+  - **C2:** pre-V7 unknown-source orders are not backfilled. `attributionSourceMixed` is raised only when such an order is attributed to a session in the selected population. No production tenants exist, so only staging is affected.
+  - **C3:** the 10-minute client-clock tolerance also applies at t₀ (`order >= t₀ − 10 min`). Without it, lift is understated.
+  - **C4:** the under-200-orders rule applies to revenue per session and AOV only.
+  - **C5:** SRM is computed on `shown` and on the selected population, and a failure of either greys the tiles. A failed CTR or trigger-rate A/A check (p < 0.01) also greys the tiles.
+  - **C6:** the diagnostics definitions are confirmed. Verify that click and line-item product ids are both numeric strings.
+  - **C7:** the line-item JSON key is `platformProductId` (camelCase). architecture.md follows; the event wire field is `preIntentRecs`.
+- **P4 accepted (C8): first-entry cohort.**
+  - A session counts only in the period in which it first met the widget. Sessions with a `widget_shown` or a trigger in `[from − 30d, from)` are excluded from the range.
+  - Why: returning shoppers may return *because of* their arm, so counting them as new entrants biases lift in an unknown direction.
+  - Cost: fewer sessions per period, so lift needs longer to reach significance.
+- **Test orders (spec §3.1.5 / G6):** Shopify `test` orders are persisted as `orders_attributed.is_test` and excluded from all readout queries. A merchant testing the widget on a live store would otherwise inflate lift.
+- Delivery:
+  - **PR #78 (before merge):** C2, C3, C5, P4/C8 and test-order filtering, plus their tests.
+  - **PR 2:** G4 (`events.received_at`), CSV export, hourly cache, D4 per-tenant split for SRM, `servedFromShare`.
+- Made by: Product Owner (advised by claude, recommendations-specialist)
