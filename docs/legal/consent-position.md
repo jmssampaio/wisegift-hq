@@ -230,6 +230,48 @@ product-link marker, and event sending.
   falls back to a per-request coin flip on the backend. Recommendations
   still render, but measurement does not.
 
+**Content request before any consent (in progress, widget
+`feature/per-placement-hooks`, not yet shipped).**
+
+> *DRAFT — pending PO + attorney review.* New paragraph. Accurate only
+> once the conditions listed in the 2026-10-17 security-and-privacy
+> review are met (explicit no-referrer / no-credentials on the request,
+> backend behaviour verified on the shipping branch, hosting request-log
+> retention confirmed). Do not hand to a merchant before then.
+
+When an inline WiseGift block scrolls into view, the widget asks the
+WiseGift API for your hook copy and appearance in the storefront's
+language, so the block shows your copy instead of a placeholder. This
+happens in every consent state, including before the visitor has chosen
+and after they declined. Without tracking consent, this request:
+
+- sends only the block's placement and the storefront language set by
+  your theme, plus what every web request carries (IP address, browser
+  user-agent, your storefront's origin);
+- sends no WiseGift identifier and no cookie, and does not read or write
+  the visitor's browser storage;
+- returns, with the copy, a one-hour access token bound to a random
+  identifier the server creates for that page. The widget keeps it in
+  page memory only, to serve recommendations if the visitor asks for
+  them. It is discarded when the page is left, and is never stored,
+  written to the cart or used for events;
+- creates no session or event record at WiseGift. WiseGift's
+  application does not log the visitor's IP address or user-agent. Our
+  EU hosting provider's request logs may hold them for
+  **[RETENTION TO CONFIRM]**.
+
+Our position is that this request is part of delivering the page content
+the visitor asked to see, not tracking. It is therefore outside the
+consent requirement or, if a supervisory authority treats it as access
+to the terminal, strictly necessary.
+
+> **ATTORNEY QUESTION (Art. 5(3) scope):** EDPB Guidelines 2/2023 read
+> "storage" and "access" broadly, including script-triggered requests
+> and data held in memory. Is a content request that also returns an
+> in-memory, page-scoped token covered by the strictly-necessary
+> exemption? Or must the pre-consent request return copy only, with the
+> token minted when the visitor first interacts?
+
 ---
 
 *Questions on this position should be routed to WiseGift's privacy

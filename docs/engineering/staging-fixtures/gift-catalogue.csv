@@ -1,0 +1,61 @@
+Handle,Title,Body (HTML),Vendor,Type,Tags,Published,Option1 Name,Option1 Value,Variant SKU,Variant Inventory Tracker,Variant Inventory Qty,Variant Inventory Policy,Variant Fulfillment Service,Variant Price,Variant Requires Shipping,Variant Taxable,Status
+silk-scarf-terracotta,"Silk Scarf, Terracotta",<p>A soft 100% silk scarf in a warm terracotta print. Easy to wear all year.</p>,Atelier Lume,Scarves,"women,accessories,gift,silk",TRUE,Size,One size,SILK-SCARF-TERRACOTTA-1,shopify,25,deny,manual,45.00,TRUE,TRUE,active
+cashmere-beanie-oat,"Cashmere Beanie, Oat",<p>Ribbed cashmere beanie in a neutral oat colour.</p>,Northfold,Hats,"unisex,winter,cashmere,gift",TRUE,Size,One size,CASHMERE-BEANIE-OAT-1,shopify,20,deny,manual,65.00,TRUE,TRUE,active
+leather-card-holder-black,Leather Card Holder,<p>Slim card holder in vegetable-tanned leather. Fits six cards.</p>,Northfold,Small leather goods,"unisex,leather,minimal,gift",TRUE,Size,Black,LEATHER-CARD-HOLDER-BLACK-1,shopify,40,deny,manual,29.00,TRUE,TRUE,active
+leather-card-holder-black,,,,,,,,Tan,LEATHER-CARD-HOLDER-BLACK-2,shopify,30,deny,manual,29.00,TRUE,TRUE,
+leather-weekender-bag,Leather Weekender Bag,<p>Full-grain leather weekender with a padded strap.</p>,Northfold,Bags,"unisex,travel,leather,premium",TRUE,Size,Cognac,LEATHER-WEEKENDER-BAG-1,shopify,8,deny,manual,189.00,TRUE,TRUE,active
+linen-shirt-white,"Linen Shirt, White",<p>Relaxed linen shirt with mother-of-pearl buttons.</p>,Atelier Lume,Shirts,"men,linen,summer",TRUE,Size,S,LINEN-SHIRT-WHITE-1,shopify,10,deny,manual,59.00,TRUE,TRUE,active
+linen-shirt-white,,,,,,,,M,LINEN-SHIRT-WHITE-2,shopify,12,deny,manual,59.00,TRUE,TRUE,
+linen-shirt-white,,,,,,,,L,LINEN-SHIRT-WHITE-3,shopify,10,deny,manual,59.00,TRUE,TRUE,
+linen-shirt-white,,,,,,,,XL,LINEN-SHIRT-WHITE-4,shopify,6,deny,manual,59.00,TRUE,TRUE,
+merino-sweater-navy,"Merino Crew Sweater, Navy",<p>Fine merino wool crew neck in deep navy.</p>,Northfold,Knitwear,"men,women,merino,winter",TRUE,Size,S,MERINO-SWEATER-NAVY-1,shopify,8,deny,manual,79.00,TRUE,TRUE,active
+merino-sweater-navy,,,,,,,,M,MERINO-SWEATER-NAVY-2,shopify,10,deny,manual,79.00,TRUE,TRUE,
+merino-sweater-navy,,,,,,,,L,MERINO-SWEATER-NAVY-3,shopify,8,deny,manual,79.00,TRUE,TRUE,
+wrap-dress-forest,"Wrap Dress, Forest Green",<p>Flowing wrap dress for dinners and weddings.</p>,Atelier Lume,Dresses,"women,dress,occasion",TRUE,Size,XS,WRAP-DRESS-FOREST-1,shopify,5,deny,manual,95.00,TRUE,TRUE,active
+wrap-dress-forest,,,,,,,,S,WRAP-DRESS-FOREST-2,shopify,8,deny,manual,95.00,TRUE,TRUE,
+wrap-dress-forest,,,,,,,,M,WRAP-DRESS-FOREST-3,shopify,8,deny,manual,95.00,TRUE,TRUE,
+wrap-dress-forest,,,,,,,,L,WRAP-DRESS-FOREST-4,shopify,5,deny,manual,95.00,TRUE,TRUE,
+gold-hoop-earrings,Gold Hoop Earrings,"<p>Gold-plated sterling silver hoops, everyday size.</p>",Mira Studio,Jewellery,"women,jewellery,gold,gift",TRUE,Size,Small,GOLD-HOOP-EARRINGS-1,shopify,30,deny,manual,38.00,TRUE,TRUE,active
+gold-hoop-earrings,,,,,,,,Large,GOLD-HOOP-EARRINGS-2,shopify,20,deny,manual,42.00,TRUE,TRUE,
+pearl-pendant-necklace,Pearl Pendant Necklace,<p>Freshwater pearl on a fine gold-plated chain.</p>,Mira Studio,Jewellery,"women,jewellery,pearl,anniversary",TRUE,Size,One size,PEARL-PENDANT-NECKLACE-1,shopify,15,deny,manual,55.00,TRUE,TRUE,active
+signet-ring-silver,Silver Signet Ring,<p>Polished sterling silver signet ring.</p>,Mira Studio,Jewellery,"men,unisex,jewellery,silver",TRUE,Size,Size 9,SIGNET-RING-SILVER-1,shopify,6,deny,manual,72.00,TRUE,TRUE,active
+signet-ring-silver,,,,,,,,Size 10,SIGNET-RING-SILVER-2,shopify,6,deny,manual,72.00,TRUE,TRUE,
+signet-ring-silver,,,,,,,,Size 11,SIGNET-RING-SILVER-3,shopify,6,deny,manual,72.00,TRUE,TRUE,
+canvas-tote-sand,"Canvas Tote, Sand",<p>Heavy cotton canvas tote with an inside pocket.</p>,Atelier Lume,Bags,"women,unisex,everyday,eco",TRUE,Size,One size,CANVAS-TOTE-SAND-1,shopify,50,deny,manual,24.00,TRUE,TRUE,active
+wool-socks-gift-box,Wool Socks Gift Box (3 pairs),<p>Three pairs of soft merino blend socks in a gift box.</p>,Northfold,Socks,"unisex,socks,gift box,cosy",TRUE,Size,36-40,WOOL-SOCKS-GIFT-BOX-1,shopify,30,deny,manual,22.00,TRUE,TRUE,active
+wool-socks-gift-box,,,,,,,,41-46,WOOL-SOCKS-GIFT-BOX-2,shopify,30,deny,manual,22.00,TRUE,TRUE,
+sunglasses-tortoise,"Sunglasses, Tortoise",<p>Acetate frames with UV400 lenses.</p>,Mira Studio,Eyewear,"unisex,summer,eyewear",TRUE,Size,One size,SUNGLASSES-TORTOISE-1,shopify,15,deny,manual,68.00,TRUE,TRUE,active
+leather-belt-brown,"Leather Belt, Brown",<p>Full-grain leather belt with a brushed brass buckle.</p>,Northfold,Belts,"men,leather,classic",TRUE,Size,85 cm,LEATHER-BELT-BROWN-1,shopify,10,deny,manual,42.00,TRUE,TRUE,active
+leather-belt-brown,,,,,,,,95 cm,LEATHER-BELT-BROWN-2,shopify,10,deny,manual,42.00,TRUE,TRUE,
+leather-belt-brown,,,,,,,,105 cm,LEATHER-BELT-BROWN-3,shopify,8,deny,manual,42.00,TRUE,TRUE,
+down-puffer-jacket,Down Puffer Jacket,<p>Lightweight responsibly sourced down jacket.</p>,Northfold,Outerwear,"women,men,winter,premium",TRUE,Size,S,DOWN-PUFFER-JACKET-1,shopify,5,deny,manual,179.00,TRUE,TRUE,active
+down-puffer-jacket,,,,,,,,M,DOWN-PUFFER-JACKET-2,shopify,6,deny,manual,179.00,TRUE,TRUE,
+down-puffer-jacket,,,,,,,,L,DOWN-PUFFER-JACKET-3,shopify,5,deny,manual,179.00,TRUE,TRUE,
+kids-rain-jacket-yellow,"Kids Rain Jacket, Yellow",<p>Waterproof jacket with a cosy fleece lining.</p>,Little Field,Kids,"kids,rain,outdoor",TRUE,Size,4-5Y,KIDS-RAIN-JACKET-YELLOW-1,shopify,10,deny,manual,39.00,TRUE,TRUE,active
+kids-rain-jacket-yellow,,,,,,,,6-7Y,KIDS-RAIN-JACKET-YELLOW-2,shopify,10,deny,manual,39.00,TRUE,TRUE,
+kids-rain-jacket-yellow,,,,,,,,8-9Y,KIDS-RAIN-JACKET-YELLOW-3,shopify,8,deny,manual,39.00,TRUE,TRUE,
+baby-knit-cardigan,Baby Knit Cardigan,<p>Organic cotton cardigan with wooden buttons.</p>,Little Field,Baby,"baby,knit,new baby,gift",TRUE,Size,0-6M,BABY-KNIT-CARDIGAN-1,shopify,12,deny,manual,34.00,TRUE,TRUE,active
+baby-knit-cardigan,,,,,,,,6-12M,BABY-KNIT-CARDIGAN-2,shopify,12,deny,manual,34.00,TRUE,TRUE,
+soy-candle-fig,"Soy Candle, Fig & Cedar","<p>Hand-poured soy candle, about 45 hours of burn time.</p>",Casa Calma,Candles,"home,candle,scent,gift",TRUE,Size,200 g,SOY-CANDLE-FIG-1,shopify,40,deny,manual,26.00,TRUE,TRUE,active
+ceramic-mug-set,Ceramic Mug Set (2),"<p>Two stoneware mugs, dishwasher safe.</p>",Casa Calma,Tableware,"home,kitchen,ceramic,housewarming",TRUE,Size,Speckled white,CERAMIC-MUG-SET-1,shopify,25,deny,manual,32.00,TRUE,TRUE,active
+linen-throw-blanket,Linen Throw Blanket,"<p>Stonewashed linen throw, 130 x 170 cm.</p>",Casa Calma,Textiles,"home,linen,cosy,bedroom",TRUE,Size,Oat,LINEN-THROW-BLANKET-1,shopify,10,deny,manual,89.00,TRUE,TRUE,active
+linen-throw-blanket,,,,,,,,Sage,LINEN-THROW-BLANKET-2,shopify,8,deny,manual,89.00,TRUE,TRUE,
+table-lamp-rattan,Rattan Table Lamp,<p>Handwoven rattan shade on an oak base.</p>,Casa Calma,Lighting,"home,lighting,bedroom,living room",TRUE,Size,One size,TABLE-LAMP-RATTAN-1,shopify,6,deny,manual,115.00,TRUE,TRUE,active
+photo-frame-oak,Oak Photo Frame,<p>Solid oak frame with a glass front.</p>,Casa Calma,Decor,"home,decor,anniversary,personal",TRUE,Size,10x15,PHOTO-FRAME-OAK-1,shopify,30,deny,manual,19.00,TRUE,TRUE,active
+photo-frame-oak,,,,,,,,13x18,PHOTO-FRAME-OAK-2,shopify,20,deny,manual,24.00,TRUE,TRUE,
+leather-journal,Leather Journal,<p>Refillable leather journal with dotted pages.</p>,Northfold,Stationery,"stationery,leather,personal,gift",TRUE,Size,A5,LEATHER-JOURNAL-1,shopify,25,deny,manual,28.00,TRUE,TRUE,active
+perfume-eau-de-parfum,"Eau de Parfum, Amber 50 ml",<p>Warm amber and vanilla eau de parfum.</p>,Mira Studio,Fragrance,"fragrance,women,men,premium",TRUE,Size,50 ml,PERFUME-EAU-DE-PARFUM-1,shopify,15,deny,manual,85.00,TRUE,TRUE,active
+gift-wrap-kit,Gift Wrap Kit,"<p>Recycled paper, twine and tags for three gifts.</p>",Casa Calma,Accessories,"gift wrap,accessories",TRUE,Size,One size,GIFT-WRAP-KIT-1,shopify,60,deny,manual,9.00,TRUE,TRUE,active
+cashmere-scarf-grey,"Cashmere Scarf, Grey",<p>Pure cashmere scarf in heather grey.</p>,Northfold,Scarves,"unisex,winter,cashmere,premium",TRUE,Size,One size,CASHMERE-SCARF-GREY-1,shopify,10,deny,manual,129.00,TRUE,TRUE,active
+watch-minimal-steel,Minimal Steel Watch,<p>36 mm steel case with a sapphire glass face.</p>,Mira Studio,Watches,"unisex,watch,premium,anniversary",TRUE,Size,Silver,WATCH-MINIMAL-STEEL-1,shopify,6,deny,manual,159.00,TRUE,TRUE,active
+watch-minimal-steel,,,,,,,,Black,WATCH-MINIMAL-STEEL-2,shopify,6,deny,manual,159.00,TRUE,TRUE,
+silk-pillowcase,Silk Pillowcase,"<p>Mulberry silk pillowcase, standard size.</p>",Casa Calma,Textiles,"home,silk,bedroom,self care",TRUE,Size,Ivory,SILK-PILLOWCASE-1,shopify,15,deny,manual,49.00,TRUE,TRUE,active
+silk-pillowcase,,,,,,,,Blush,SILK-PILLOWCASE-2,shopify,12,deny,manual,49.00,TRUE,TRUE,
+cotton-pyjama-set,Cotton Pyjama Set,<p>Brushed cotton pyjamas with piping.</p>,Atelier Lume,Loungewear,"women,men,loungewear,cosy",TRUE,Size,S,COTTON-PYJAMA-SET-1,shopify,8,deny,manual,69.00,TRUE,TRUE,active
+cotton-pyjama-set,,,,,,,,M,COTTON-PYJAMA-SET-2,shopify,10,deny,manual,69.00,TRUE,TRUE,
+cotton-pyjama-set,,,,,,,,L,COTTON-PYJAMA-SET-3,shopify,8,deny,manual,69.00,TRUE,TRUE,
+trainers-white-leather,White Leather Trainers,<p>Minimal leather trainers with a rubber sole.</p>,Northfold,Shoes,"unisex,shoes,everyday",TRUE,Size,39,TRAINERS-WHITE-LEATHER-1,shopify,4,deny,manual,119.00,TRUE,TRUE,active
+trainers-white-leather,,,,,,,,40,TRAINERS-WHITE-LEATHER-2,shopify,5,deny,manual,119.00,TRUE,TRUE,
+trainers-white-leather,,,,,,,,41,TRAINERS-WHITE-LEATHER-3,shopify,5,deny,manual,119.00,TRUE,TRUE,
+trainers-white-leather,,,,,,,,42,TRAINERS-WHITE-LEATHER-4,shopify,5,deny,manual,119.00,TRUE,TRUE,
+trainers-white-leather,,,,,,,,43,TRAINERS-WHITE-LEATHER-5,shopify,4,deny,manual,119.00,TRUE,TRUE,

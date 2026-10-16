@@ -1770,3 +1770,37 @@
   - **Why:** after a pack switch, or with custom ranges, coarse buckets could serve cached products above the shopper's budget. That violates the 2026-10-08 "never over budget" rule.
   - **Cost:** one cache flush. No pilots are live.
 - Made by: Product Owner (advised by claude, recommendations-specialist)
+
+## 2026-10-17 — Budget tiers spec accepted (OQ-1..OQ-9); staging catalogue finding; viewport-bootstrap privacy conditions
+- **Budget tiers:** spec `docs/engineering/budget-tiers.md` (`recommendations-specialist`).
+  - The PO accepted every recommendation:
+    - **OQ-1:** a per-tier minimum of `max(5, recs_per_widget, 10% of N)`. The budget step is hidden below about 10 priced, in-stock products.
+    - **OQ-2:** never pre-select the open-ended top tier; no suggestion with only 2 tiers.
+    - **OQ-3:** for multi-currency storefronts, MVP shows tier names only, with no converted amounts.
+    - **OQ-4:** suggestion-table judgement cells as proposed.
+    - **OQ-5:** no suggestion for self.
+    - **OQ-6:** 4 nullable `intent_submitted` fields (`budgetTierSetVersion`, `budgetSuggestedTier`, `budgetChoice`, `budgetInteracted`), subject to a `security-and-privacy` review.
+    - **OQ-7:** phase 2 (slider) thresholds as proposed, revisited after the first 400 submissions.
+    - **OQ-8:** tier names and translations as drafted.
+    - **OQ-9:** gift cards, €0 and unpublished products are **not** recommendable.
+  - **Code prerequisites:**
+    - F1: price rollups must use available variants only.
+    - F2: store the shop currency from `shop.json` in `tenants.currency`.
+    - F3: exact-budget cache key, PR #92.
+    - Also exclude gift cards, €0 and unpublished products.
+- **Staging catalogue finding:** claude ran the spec's query read-only on staging. Both stores hold the Shopify sample catalogue: 14 in-stock priced products each, at €9.95 and then €600–€2,630. Nothing between €10 and €600 explains the empty "100–200 €" result.
+  - Action: import a realistic gift catalogue for testing, 30 products at €9–€189, from `docs/engineering/staging-fixtures/gift-catalogue.csv`.
+- **Viewport bootstrap without consent** (widget PR #26): `security-and-privacy` **acknowledges it with conditions** (informational, not legal advice):
+  1. `frontend-engineer`: `referrerPolicy: "no-referrer"` and `credentials: "omit"` on all widget fetches, plus the missing consent tests. Before merge.
+  2. `backend-engineer`, on the shipping branch:
+     - confirm no shopper write at bootstrap;
+     - no IP, user agent or raw `locale` in logs;
+     - `locale` allowlisted;
+     - JWT claims as documented;
+     - **fix G-f**: `WidgetJwtService` builds and parses claims with string formatting, so a crafted `Origin` could inject a duplicate `exp`. That is a medium-severity TTL bypass, with no cross-tenant leak. Fix: build and parse with Jackson, reject duplicate keys, accept only `https://<host>` Origins.
+
+     Before the first pilot.
+  3. `devops-expert`: document Render's request-log fields, retention and region in `sub-processors.md`. Before the first pilot.
+  4. `security-and-privacy`: reword DPA 6.4. It currently says WiseGift never receives IP or user agent, but every HTTP request carries them. Then PO + attorney review.
+  5. **Attorney:** the Art. 5(3) question on the in-memory token, drafted in `consent-position.md` §6 "Content request before any consent". The fallback is a token-free config fetch on viewport entry, with the token minted on first interaction.
+- Made by: Product Owner (advised by claude, recommendations-specialist, security-and-privacy)
