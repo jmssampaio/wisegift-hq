@@ -291,7 +291,9 @@ Platform-agnostic. The identifiers a merchant carries on their source platform (
 | feature_flags | JSONB | Per-tenant boolean flags (e.g. `{"escalate_ranker": true}`, which routes full-form gift intents to GPT-4o). Starts as `{}`. See `decisions.md` 2026-09-29 and 2026-10-06 "PR 7d" |
 | consent_mode_required | BOOLEAN | Default **`true`** (fail closed), exposed to the widget as `consentModeRequired`. When `true`, the widget measures only if the Shopify Customer Privacy API reports `analyticsProcessingAllowed()`. Without consent: no localStorage write, no session ID, no cart attribute, no event emission, and holdout falls back to a per-request coin flip with `attribution_mode=degraded`. `false` = legitimate-interest mode, measuring without a consent signal: **PENDING PO + attorney confirmation** (§7). Delivered to the widget as a top-level boolean in the session bootstrap response (§9.2) and to the admin in `GET /admin/v1/auth/me` → `tenant.consentModeRequired`. See `decisions.md` 2026-10-14 "`_wg_session` order join … G5", which supersedes the 2026-09-29 "Widget consent for EU" default of `false` |
 | holdout_percent | SMALLINT | Allowed values 10 or 20, default 10. 20 = design-partner 80/20 opt-in. Passed to `HoldoutAssigner` by the session bootstrap and the `widget_shown` sticky assignment. Each change is audited with an effective-from timestamp (e.g. `tenant_holdout_changes`). See `decisions.md` 2026-10-14 "M1·2 D4" |
-| active | BOOLEAN | `false` until onboarding wizard completes |
+| active | BOOLEAN | `false` until onboarding wizard completes. The widget only runs for a **live** tenant (`active = true` and `soft_deleted_at IS NULL`): otherwise every `/widget/v1/*` call is refused with 403 (decisions.md 2026-10-16 Q-C8; backend PR #85). Going live requires a confirmed contact email (`409 contact_email_required`, M2·3) |
+| contact_email | VARCHAR(254) | Nullable. Merchant's notice address (DPA notices, billing, essential service notices; never marketing). Stored trimmed, as entered; never logged. Set only together with `contact_email_confirmed_at` (CHECK: both null or both set). See decisions.md 2026-10-16 "Merchant contact email…" (BE-3, V10) |
+| contact_email_confirmed_at | TIMESTAMPTZ | Nullable. Set to now() on every in-app confirmation (first set, change, re-confirm). Non-null = confirmed; gates go-live |
 | soft_deleted_at | TIMESTAMPTZ | Nullable |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |
@@ -306,11 +308,23 @@ Holds both the OAuth material and the platform-side identity of the merchant. On
 | platform | VARCHAR(16) | `shopify` (MVP), later `vtex`, `sfcc` |
 | platform_shop_domain | VARCHAR(255) | Merchant's identifier on the source platform. Shopify: `merchant.myshopify.com`. VTEX: account name. SFCC: realm host. Unique per `(platform, platform_shop_domain)` |
 | platform_shop_id | VARCHAR(64) | Platform-native numeric or opaque ID as string (Shopify shop_id, VTEX account_id, SFCC organization_id). Stringly-typed so post-MVP platforms with non-numeric IDs land cleanly |
-| custom_domain | VARCHAR(255) | Nullable. Merchant's storefront domain if configured (e.g. `shop.example.com`). Populated from Shopify Admin API `GET /shop.json → primary_domain` at OAuth completion; refreshed on `shop/update` webhook or nightly reconciliation. Widget request-origin allowlist = `[platform_shop_domain, custom_domain].filter(non-null)`. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
+| custom_domain | VARCHAR(255) | Nullable. Merchant's storefront domain if configured (e.g. `shop.example.com`). Populated from Shopify Admin API `GET /shop.json → domain` at install (REST has no `primary_domain`; fixed in BE-2, decisions.md 2026-10-15 finding F-A); refreshed on `shop/update` webhook or nightly reconciliation. Widget request-origin allowlist = `[platform_shop_domain, custom_domain].filter(non-null)`. See `decisions.md` 2026-09-29 "Architecture open questions closed" |
 | oauth_access_token_encrypted | TEXT | Encrypted at rest; decrypted only in memory for the outbound call |
 | scopes | TEXT[] | Granted OAuth scopes |
 | installed_at | TIMESTAMPTZ | |
 | refreshed_at | TIMESTAMPTZ | |
+| credential_invalid_at | TIMESTAMPTZ | Nullable. Set when Shopify answers 401 to the stored token; a flagged credential is not live, so the next admin open gets `409 installation_required` and Token Exchange re-runs and clears it (BE-2b, V9) |
+
+### `tenant_contact_email_events`
+
+Audit trail of contact-email confirmations (BE-3, V10). Stores **no address and no staff identity** (decisions.md 2026-10-15 decision 4). Included in the M3·1 hard purge.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | BIGSERIAL | PK |
+| tenant_id | UUID | NOT NULL, FK to `tenants` |
+| action | VARCHAR(16) | CHECK `set`, `changed`, `reconfirmed` |
+| occurred_at | TIMESTAMPTZ | NOT NULL; index `(tenant_id, occurred_at)` |
 
 ### `admin_users`
 
@@ -522,9 +536,9 @@ An anonymous daily aggregate: one row per `(tenant_id, day, placement, arm, popu
 
 Widget token issuance flow (as built, `WidgetSessionController`):
 1. The widget calls `POST /widget/v1/session` with `{ sessionId?, placement }`. The 2026-10-07 decision moved this call to the shopper's first interaction with the hook, not widget mount.
-2. The server resolves the tenant from the browser `Origin` header: the host is matched against `platform_credentials.platform_shop_domain`, then `custom_domain`. A missing or unknown Origin returns **403**. A `tenantId` in the body is ignored, kept only for older bundles. No public key is checked.
+2. The server resolves the tenant from the browser `Origin` header: the host is matched against `platform_credentials.platform_shop_domain`, then `custom_domain`. A missing or unknown Origin returns **403**. A tenant that is not live (`active = false`, soft-deleted or missing) also gets **403 with no body**, indistinguishable from an unknown Origin (decisions.md 2026-10-16 Q-C8, backend PR #85). A `tenantId` in the body is ignored, kept only for older bundles. No public key is checked.
 3. The server honours `sessionId` if it parses as a UUID, otherwise it mints a fresh v4. It then mints the JWT binding `tenant_id` + `session_id`, computes `isHoldout` (a pure function of the session ID, no write), and returns the response in §9.2. No `sessions` row is created until the first `widget_shown` event.
-4. The widget sends the token as `Authorization: Bearer <token>` on later calls until expiry, then bootstraps again. `/recommendations` and `/events` return **403** if the body's `sessionId` differs from the token's.
+4. The widget sends the token as `Authorization: Bearer <token>` on later calls until expiry, then bootstraps again. `/recommendations` and `/events` return **403** if the body's `sessionId` differs from the token's, and **403 with no body** if the token's tenant is not live (checked on every call, so a deactivation takes effect immediately).
 
 ### 9.2 Widget API — `/widget/v1/*`
 
@@ -656,6 +670,7 @@ The Theme App Extension block renders exactly two elements:
 - Script load fails → widget custom element never upgrades → block renders nothing.
 - API timeout (> 2 s) → serve cached recs from prior session or hide the slot.
 - Kill switch tripped server-side → server returns precomputed recs; widget renders normally.
+- Tenant not live (not yet gone live, deactivated, or soft-deleted) → every widget call is refused with 403. Target behaviour: the widget renders nothing and writes no client-side markers. Today's bundle still shows the hook and writes `wg_session` / `_wg_session` before its first call; follow-ups are a terminal `disabled` state in the widget and an app-owned `live` metafield that the Theme App Extension checks before loading the widget (written by the M2·3 go-live command).
 
 ### 10.4 Bundle discipline
 
