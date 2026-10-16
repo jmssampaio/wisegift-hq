@@ -417,6 +417,54 @@ Checklist the PO can validate on staging once built:
 | Q-P8 | The onboarding vertical list (9 values) vs packs (3): accept the mapping in §3.4? | PO |
 | Q-P9 | Packs on all plans, or reserved for a tier (the roadmap tied verticalised packs to the Growth-tier step)? **PO decision 2026-10-15:** all plans during the pilots. Revisit with marketing-manager when pricing is set. | PO + marketing-manager |
 
+### Q-F3 resolution — pending PO acknowledgement
+
+> Written 2026-10-17 by `recommendations-specialist`. It also answers Q-R2 and Q-R3. It was checked against `wisegift-backend` `origin/develop` at `0fa42bd` and `wisegift-widget` `origin/main`. It builds on the PO's 2026-10-17 direction to adopt the spec's 8 occasions.
+
+**Canonical wire values.** Lowercase snake_case. These are the only values the backend passes on to ranking.
+
+| Field | Values | Display order |
+|---|---|---|
+| `occasion` | `birthday`, `anniversary`, `christmas`, `wedding`, `baby`, `housewarming`, `just_because`, `other` | Per pack, as in §3.2 |
+| `relationship` | `partner`, `family`, `friend`, `colleague`, `client`, `other` | Per pack, as in §3.2. `client` ("A client") is shown in the **General pack only**, between Colleague and Other. Fashion and Home & Decor hide it. |
+
+- **`holiday` is retired.** It is not a canonical value.
+  - In UK and EU English, "holiday" usually means a vacation, so the ranker can drift toward travel products.
+  - `christmas` is the specific signal the EU pilot markets actually shop for.
+  - Other festivals use `other` plus interests until a merchant-selectable seasonal list exists. That list is a later feature with its own evaluation.
+- **`client` is kept.** Corporate gifting has its own product profile: formal and safe, with nothing personal or sized. It also comes from the 2026-10-07 picker brief. Mapping it to `colleague` or `other` would throw that signal away.
+- This amends the §3.2 note "the same values as today". The occasion values `christmas`, `wedding` and `other` are new on the wire, and `holiday` goes away.
+
+**Q-R2: wire values only. Confirmed, with one gap to close.**
+- **What uses the values.** The embedding input (`IntentPayload.composeEmbedInput`), the ranking prompt (`RankingPromptBuilder`), the cache key (`SignatureComposer`) and the real-intent check all use the raw `intent.relationship` / `intent.occasion` string.
+- **What the widget sends.** It sends slugs (`holiday`), never labels ("Holiday"). Relabelling ("My partner") therefore cannot change ranking or split the cache.
+- **What does not use them.** `precomputed_recs` is keyed only by source product and has no intent dimension, so it is unaffected.
+- **Gap.** The backend accepts **any** string for both fields and does not canonicalise it.
+  - `"Christmas"`, `"christmas "` and a label string would each produce a different cache key and different prompt text.
+  - Unvetted text would also reach the LLM prompt.
+  - **Fix:** allow-list and canonicalise at the request boundary (change list below). Unknown values become `null`: logged, never a 400. A shopper's recommendations never fail because of a bad picker value.
+
+**Q-R3: pack budget bands. No fragmentation, but a 24-hour budget leak after a pack switch. Recommend exact-band keys.**
+- **How the key works today.** The cache key holds a budget *bucket*, built from fixed edges 0/25/75/200/500, not the exact range.
+- **Within one pack, bands stay distinct.** Every pack's 4 bands land in 4 different buckets:
+  - General: `0-75`, `75-200`, `200-200`, `200-500+`
+  - Fashion: `0-75`, `75-75`, `75-200`, `200-500+`
+  - Home & Decor: `0-75`, `75-200`, `200-500`, `500-500+`
+  - So bands do not split the cache, and the hit rate does not change.
+- **But bands from different packs share buckets.** The budget filter is a hard SQL filter (2026-10-08) and is not part of the key. Example: General "Under 50" and Fashion "Under 30" share bucket `0-75`. After a General → Fashion switch, an "Under 30" shopper can be served cached products costing 30–50 for up to 24 hours. Custom min/max ranges collide in the same way today.
+- **Recommendation:** key on the exact `budget_min-budget_max`.
+  - With fixed bands each band is already its own bucket, so this costs **no hit rate** for band clicks. Only custom ranges lose the collapse, and those collisions are exactly the leak.
+  - This changes the "locked" key composition (2026-10-04). It is a one-time cache flush with no pilots live, but it needs PO acknowledgement.
+
+**Migration of legacy values**
+- **Requests from older bundles.** The backend maps `holiday` → `christmas` at the request boundary. That is what the "Holiday" card meant in the season it shipped for. `client` needs no alias because it stays. Remove the alias once no bundle older than the 8-occasion picker can be cached anywhere (proposed: 30 days after the widget deploy).
+- **Stored events.** None to migrate. `intent_submitted` and the `events` table carry **no** relationship or occasion field: the strict schema has no such field. `intent_form_schemas` has no rows built from the old picker. (`spec.md` "Data retention" lists intent submissions per session, but the code does not store them.)
+- **Cache.** Nothing to migrate. Entries keyed on `holiday` expire within the 24-hour TTL. The exact-band change flushes the cache once.
+- **Measurement.** Unaffected. Lift (`m1-2-lift-measurement.md`) is not segmented by occasion or relationship: no KPI, population or filter reads them. The form changes from 6 to 8 occasions in **both** arms at once, so lift stays valid. The readout notes the widget deploy date, as with any form change (Q-R4).
+- **Future logging.** If intent fields are ever logged (for the outcome-learning loop or offline evaluation sets), log the canonical values plus `intentFormSchemaVersion`, after `security-and-privacy` review.
+
+**Evaluation note.** This is a vocabulary correction, not a ranking experiment, so no lift claim is made. No offline evaluation set exists yet, so it cannot be scored offline. The safeguards are unit tests that pin the canonical lists, the alias, and the exact prompt, embedding and signature strings.
+
 ---
 
 ## 6. Deferred

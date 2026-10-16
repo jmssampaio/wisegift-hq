@@ -1744,3 +1744,29 @@
   - admin per-placement copy, trigger settings and "same headline everywhere" (`frontend-engineer`);
   - the Q-F3 resolution (`recommendations-specialist`).
 - Made by: Product Owner (advised by claude, backend-engineer)
+
+## 2026-10-17 — Budget step: guided named tiers from the catalogue; Q-F3 vocabulary; exact-budget cache key
+- **Context:** the PO found the fixed per-pack budget bands unfriendly; on staging, "100–200 €" returned no products. claude mocked three variants on the Design canvas ("Budget step — three variants"): A, a range slider; B, named tiers; C, guided.
+- **Decision 1: variant C, phased.**
+  - **Phase 1:**
+    - 4 named tiers ("A small treat / Something special / To impress / Go all out"), with tier prices **derived from each tenant's catalogue**, so every tier has products. The merchant can edit them later.
+    - A **pre-selected suggested tier** from a simple relationship + occasion rule. The copy says "we suggest" and **never** "most people choose" until real data exists.
+    - "Any price" always available.
+    - Tier names differ for self vs gift and per pack.
+  - **Phase 2:** the "Set exact amounts" slider, only if data shows demand (e.g. "Any price" share, frequent tier switching).
+  - **Unchanged:** the wire contract stays `budget_min` / `budget_max`. The suggestion is identical in both arms, so lift stays fair.
+  - **Owners:**
+    - `recommendations-specialist`: the tiering algorithm (quantiles, "nice" rounding, minimum products per tier) and the suggestion rule.
+    - `backend-engineer`: compute the tiers at catalogue sync and return tiers + suggestion in the bootstrap.
+    - `frontend-engineer`: build the step once the hooks work lands.
+- **Decision 2: Q-F3 resolution acknowledged** (`docs/product/hooks-and-packs.md` §5 "Q-F3 resolution").
+  - **Canonical occasion values:** `birthday, anniversary, christmas, wedding, baby, housewarming, just_because, other`.
+    - `holiday` is dropped. In UK/EU English it reads as "vacation", which can push the ranker toward travel products.
+    - The backend aliases `holiday → christmas` for older bundles for 30 days.
+  - **Canonical relationship values:** `partner, family, friend, colleague, client, other`. `client` stays, shown in the General pack only.
+  - **Validation:** the backend accepts only these values. Unknown values become `null`, are logged, and do **not** return a 400.
+- **Decision 3: exact-budget cache key.**
+  - The recommendation cache key uses the exact `min-max` instead of the coarse buckets (0/25/75/200/500). This supersedes the "locked" 2026-10-04 key layout.
+  - **Why:** after a pack switch, or with custom ranges, coarse buckets could serve cached products above the shopper's budget. That violates the 2026-10-08 "never over budget" rule.
+  - **Cost:** one cache flush. No pilots are live.
+- Made by: Product Owner (advised by claude, recommendations-specialist)
