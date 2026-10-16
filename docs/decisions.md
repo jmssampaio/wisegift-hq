@@ -1720,3 +1720,27 @@
   - widget #24: silent when not live;
   - widget #25: Liquid live gate, [DO NOT MERGE].
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-16 — Hooks and packs: backend contract; PO decisions Q-C1, Q-F3, Q-C5
+- **Context:** `backend-engineer` wrote `docs/engineering/hooks-and-packs-contract.md` (DRAFT backend contract) and backend PR #89 (hooks and packs PR 1):
+  - per-placement × per-language copy;
+  - pack defaults;
+  - trigger settings in the admin;
+  - bootstrap `config.hook` / `config.trigger` / `config.strings` / `language`;
+  - V12.
+- **Defaults adopted from the spec's recommendations:**
+  - Q-P1: side tab stays the default trigger, pill is a mode.
+  - Q-P3: `gift_finder` uses the home layout.
+  - Q-P5: global `hook_copy` sits below pack headlines.
+  - Q-P7: no collapsed home card.
+  - Q-B6: a new form schema version on each pack switch.
+- **Language:** comes from the storefront locale (`request.locale`), not the shopper's browser.
+- **PO decisions:**
+  1. **Q-C1, global hook copy.** Because of Q-P5, the global `hook_copy` no longer reaches any storefront placement. The staging "Wise Assistant" hook is replaced by the pack headline. The admin replaces "Default hook copy" with a **"Use the same headline everywhere"** action, which writes per-placement headline overrides.
+  2. **Q-F3, occasion values.** Adopt the spec's 8 occasions as canonical wire values, subject to `recommendations-specialist` confirming ranker/cache/precompute impact (Q-R2/Q-R3). Also resolve the `holiday` / `client` legacy values. This blocks PR 2 (pack switch preview/apply, pack intent form, form schema versioning).
+  3. **Q-C5, no flash of default copy.** The floating trigger reads its settings from an app-data metafield mirror (PR 3), so it renders right before any request. Inline hooks bootstrap on viewport entry, respecting G5.
+- **In progress:**
+  - widget per-placement layouts (`frontend-engineer`);
+  - admin per-placement copy, trigger settings and "same headline everywhere" (`frontend-engineer`);
+  - the Q-F3 resolution (`recommendations-specialist`).
+- Made by: Product Owner (advised by claude, backend-engineer)
