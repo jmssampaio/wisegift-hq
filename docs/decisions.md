@@ -1804,3 +1804,25 @@
   4. `security-and-privacy`: reword DPA 6.4. It currently says WiseGift never receives IP or user agent, but every HTTP request carries them. Then PO + attorney review.
   5. **Attorney:** the Art. 5(3) question on the in-memory token, drafted in `consent-position.md` §6 "Content request before any consent". The fallback is a token-free config fetch on viewport entry, with the token minted on first interaction.
 - Made by: Product Owner (advised by claude, recommendations-specialist, security-and-privacy)
+
+## 2026-10-17 — Budget event fields approved with conditions; floating nudge in memory only; record of processing
+- **Budget event fields** (`budget-tiers.md` §4.2, OQ-6): `security-and-privacy` approves them with conditions (informational, not legal advice).
+  - **Before the widget sends the fields:**
+    - C1: server-side enum mapping. An invalid value is set to null without dropping the event, and only the field name is logged.
+    - C2: values are validated against the tenant's own tier set: the version join is per `(tenant_id, version)`, `tierN` must be below the tier count, and the suggested tier must be at most count − 2, and null when the tenant has 2 tiers or the intent is self. A two-tenant test covers the version join.
+    - C3: no amounts, no free text, no timing or counts.
+    - C5: the fields travel only in the consent-gated event queue.
+  - **Design rules:**
+    - C6: aggregate metrics only. Never used in ranking, prompts or embeddings, and never exported per session.
+    - C7: fleet-wide figures stay internal and are never shown to another merchant (that would be a P0 cross-tenant leak).
+    - C8: any new intent field needs its own review.
+  - **Note:** `budgetSuggestedTier` coarsely reveals relationship × occasion. Docs must treat it as intent data.
+  - **Before the first pilot:**
+    - the 120-day purge is live, out of dry-run;
+    - the DPA 6.2 accuracy fix is made (backend confirms what `events` stores);
+    - a record of processing exists;
+    - the attorney has answered the Art. 28(10) question (does fleet-wide recalibration of the shared suggestion table keep WiseGift a processor?).
+  - Draft DPA and sub-processor text was appended in `docs/legal/`.
+- **Floating nudge key (PO decision):** `wisegift.floating.nudged` is held **in memory only**, never in localStorage. As a result the floating widget touches no browser storage before consent, and the first-visit pulse may repeat per page. Owner: `frontend-engineer`.
+- **Record of processing (Art. 30(2)) (PO decision):** `security-and-privacy` drafts `docs/legal/record-of-processing.md` for attorney review.
+- Made by: Product Owner (advised by claude, security-and-privacy)

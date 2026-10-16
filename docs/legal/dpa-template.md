@@ -119,6 +119,27 @@ identifier:
   > **ATTORNEY QUESTION (Art. 9):** see `consent-position.md` §5.
 - for product clicks: the platform product identifier of the clicked
   recommendation.
+- for intent submissions where the widget shows the budget step: the
+  budget option the visitor chose, recorded only as a position in the
+  Merchant's price-tier list (`tier0`–`tier3`), "Any price", or "not
+  asked"; the position of the tier the widget suggested, if one was
+  shown; whether the visitor changed the budget selection; and the
+  version number of the Merchant's price-tier list in force. These
+  fields hold no amount, no free text, and no recipient relationship or
+  occasion.
+
+> *DRAFT — pending PO + attorney review.* Budget-step bullet added for
+> `docs/engineering/budget-tiers.md` §4.2 (decisions.md 2026-10-17,
+> OQ-6). Accurate only once the four fields ship as specified there.
+> **Open accuracy point:** the intent-submission bullet above lists
+> relationship, occasion, budget band and free-text interests as event
+> data. The 2026-10-17 Q-F3 resolution (`hooks-and-packs.md` §5) states
+> that `intent_submitted` and the `events` table store no relationship
+> or occasion field. `backend-engineer` must confirm which intent fields
+> `events` actually stores today, and that bullet must then be
+> corrected. The suggested-tier position is derived from the visitor's
+> relationship and occasion answers by a fixed table, so it reveals
+> them coarsely. See clause 7.1(d).
 
 **6.3 Filtered order data**, received from the Merchant's e-commerce
 platform via webhook and filtered at ingest:
@@ -228,7 +249,27 @@ identifier and cart attribute left by an earlier visit.
   session);
 - (c) enforce per-tenant cost guardrails, including monthly usage caps,
   per-session rate limits, response caching, and the per-tenant
-  kill switch.
+  kill switch;
+- (d) measure, for the Merchant, whether the widget's budget step works
+  as intended (for example how often each price tier, "Any price" and
+  the suggested tier are chosen), and compile aggregated statistics
+  that contain no session identifier, across Merchants, to maintain and
+  improve the rules that configure the budget step. These fields are
+  not used to rank recommendations, to build a profile of a visitor
+  beyond the current session, or for any decision about a visitor.
+
+> *DRAFT — pending PO + attorney review.* Purpose (d) added for the
+> budget-step fields (clause 6.2; `budget-tiers.md` §4).
+> **ATTORNEY QUESTION (Art. 28(10)):** `budget-tiers.md` §4.4 reports
+> the budget metrics fleet-wide and uses them to recalibrate WiseGift's
+> shared suggestion table. Is compiling cross-Merchant aggregates for
+> that purpose compatible with WiseGift's processor role under this DPA
+> (clause 3: "does not process Personal Data for its own purposes") if
+> the Merchant authorises it here? Or does it make WiseGift a controller
+> for that step, needing a separate basis and notice? The engineering
+> mitigation in place either way: cross-Merchant figures are computed
+> only from per-Merchant aggregates with no session identifier, offline,
+> and are never shown to another Merchant.
 
 **7.2 Nature of processing.** Processing consists of:
 
