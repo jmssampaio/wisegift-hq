@@ -1673,3 +1673,21 @@
   - audit table `tenant_contact_email_events (id, tenant_id, action, occurred_at)`, which stores no address and no staff identity.
   - Next free migration number: **V10** (V7–V9 are used).
 - Made by: Product Owner (advised by claude, product-analyst)
+
+## 2026-10-16 — Embedded admin works inside Shopify on staging (Phase 1 smoke test passed); R3 closed
+- **Deployed:**
+  - Admin: ADM-2 (#8, per-shop `frame-ancestors`, query-preserving `/` redirect) and ADM-1 (#9, App Bridge bearer auth and installation gate), both merged and auto-deployed.
+  - Widget app: WID-1 (#23, `application_url` → `https://wisegift-admin-staging.onrender.com/`), deployed as app version **`wisegift-staging-16`** from `main` `18257cc`. `shopify app config validate` passed before deploy.
+  - Backend: already live with BE-1 (#77), BE-2 (#80), BE-2b (#82), BE-5 status per its PR, and V7–V9.
+- **Pre-deploy checks by claude on the staging admin:**
+  - `/` returns 307 to `/onboarding` with the query string intact;
+  - the per-shop `frame-ancestors https://wisegift-dev.myshopify.com https://admin.shopify.com`;
+  - an invalid `shop` falls back to `https://admin.shopify.com` only;
+  - `Referrer-Policy: no-referrer`;
+  - the admin `shopify-api-key` equals the TOML `client_id`.
+- **PO smoke test:** WiseGift opens inside the `wisegift-dev` Shopify admin with no login.
+- **R3 (ID-token algorithm) closed:** the backend accepts only HS256, so a working embedded `/me` proves Shopify signs ID tokens with HS256.
+- **Not yet proven:** the fresh-install path (409 → `POST /admin/v1/installation` → Token Exchange → tenant created). Plan §10 E2E on a new dev store.
+  - **Blocking precondition:** the PO confirms whether the staging app is custom or public distribution. Under public distribution, `expiring=0` may be refused (PO-1 / R1).
+- **Rollback:** release app version `wisegift-staging-15` in the Dev Dashboard.
+- Made by: Product Owner (advised by claude)
