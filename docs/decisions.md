@@ -1642,3 +1642,13 @@
   - **PR #78 (before merge):** C2, C3, C5, P4/C8 and test-order filtering, plus their tests.
   - **PR 2:** G4 (`events.received_at`), CSV export, hourly cache, D4 per-tenant split for SRM, `servedFromShare`.
 - Made by: Product Owner (advised by claude, recommendations-specialist)
+
+## 2026-10-16 — Staging tenant was soft-deleted since 2026-10-07; cleared by hand
+- **Finding:** the only staging tenant (`3bfb3ca2-…`, `wisegift-dev`) had `soft_deleted_at = 2026-10-07 13:42`.
+  - Cause: an uninstall followed by a reinstall on 2026-10-07. The legacy `refreshExisting` never cleared `soft_deleted_at` (bug C13, fixed for future reinstalls by BE-2, PR #80).
+  - The widget kept working because the widget path does not check the flag.
+- **Symptom:** after BE-1/BE-2 went live, admin login on staging stopped working. It worked again as soon as the flag was cleared. The exact check involved was not confirmed; most likely the tenant-liveness rule now used when resolving the admin's tenant.
+- **Risk avoided:** the 30-day hard purge (PR #79, still in dry-run) would have fully deleted the tenant from 2026-11-06 once dry-run was switched off.
+- **Action (PO-approved):** a one-off `UPDATE tenants SET soft_deleted_at = NULL, updated_at = now()` for that tenant. `active` stays `false`; going live is the PO's onboarding step.
+- **Follow-up:** before switching the purge out of dry-run in any environment, review its dry-run audit lines, so no tenant that is actually in use is listed.
+- Made by: Product Owner (advised by claude)
