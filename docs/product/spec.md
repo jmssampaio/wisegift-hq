@@ -58,7 +58,7 @@ As a merchant admin, I want to install WiseGift from the Shopify App Store (or a
 
 ### Installation gate and error screens: copy and support contact (ADM-1)
 
-> **DRAFT — Q-C1..Q-C9 decided by PO 2026-10-16 (see decisions.md); copy and layout pending PO review (2026-10-16).** Copy for the screens in `embedded-admin-auth-phase1-plan.md` §4 (installation gate, not-embedded page) and §3.6 (error contract). Values in `[BRACKETS]` are placeholders **the PO fills**. Engineering must not invent them.
+> **DRAFT — pending PO review (2026-10-16).** Copy for the screens in `embedded-admin-auth-phase1-plan.md` §4 (installation gate, not-embedded page) and §3.6 (error contract). Values in `[BRACKETS]` are placeholders **the PO fills**. Engineering must not invent them.
 
 **Support contact (one value, used everywhere):**
 - `[SUPPORT EMAIL]`: a WiseGift role address, for example `support@<wisegift domain>`. Not a personal inbox. **PO to fill.**
@@ -513,7 +513,7 @@ As a merchant admin, I want to see the widget's impact on my store in one screen
   - **Sample-ratio check (SRM)** on `shown` and on the active population.
   - They are shown in a "Data checks" panel with a pass / failed status per check, never with green/red lift colouring or a lift percentage.
   - If any check fails (p < 0.01), every lift tile turns grey and the panel explains: "A data check failed, so lift results are hidden until we've looked into it." Definitions: `m1-2-lift-measurement.md` §2.1.
-  - *DRAFT — Q-C1..Q-C9 decided by PO 2026-10-16 (see decisions.md); copy and layout pending PO review (2026-10-16):* the panel layout and copy are new. The P2 rule itself is decided.
+  - *DRAFT — pending PO review (2026-10-16):* the panel layout and copy are new. The P2 rule itself is decided.
 - [ ] **Revenue** is Shopify `total_price`. That is gross: shipping and tax included, before refunds. Tiles and the CSV label it "Gross order value (incl. shipping & tax, before refunds)" (M1·2 D8).
 - [ ] **Recommendation diagnostics (exposed only, no lift claim)** replace the former add-to-cart tile (M1·2 D1). They are shown as absolute rates for the exposed arm, with no holdout column, no lift percentage and no significance colour:
   - **Rec click-through**: triggered exposed sessions with ≥ 1 `product_clicked` after the trigger.
