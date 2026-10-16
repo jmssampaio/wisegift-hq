@@ -1691,3 +1691,32 @@
   - **Blocking precondition:** the PO confirms whether the staging app is custom or public distribution. Under public distribution, `expiring=0` may be refused (PO-1 / R1).
 - **Rollback:** release app version `wisegift-staging-15` in the Dev Dashboard.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-16 — Fresh install verified end to end; orders ignored before go-live; M2·3 follow-up decisions
+- **Fresh-install E2E (plan §10), verified on staging:**
+  - The PO installed WiseGift Staging on a new dev store, `dummy-store-3x0otvhy.myshopify.com`. Shopify-managed install → the admin opened inside the Shopify admin → the embedded install committed via Token Exchange (`EmbeddedInstallService … outcome=INSTALLED`).
+  - The tenant `c555801d-…` was created as expected:
+    - no admin user (no signup or password);
+    - a live credential;
+    - scopes `read_inventory,read_orders,read_products`;
+    - `custom_domain` populated (F-A fix);
+    - `consent_mode_required = true`;
+    - catalog synced (17 products);
+    - `active = false`, awaiting go-live.
+  - Webhooks registered: a test checkout produced `orders/create … test=true` (G6 flag captured).
+  - Shopify issued a **non-expiring** offline token for `expiring=0`, so the custom-vs-public question does not block today. The migration to expiring tokens + GraphQL stays required before the public App Store (2027-01-01 deadline).
+- **Orders before go-live (PO decision):** `orders/create` for a tenant that is not live is ignored.
+  - Nothing is persisted, and Shopify still gets a 200.
+  - Implemented in PR #85, commit `41e2cf7`.
+  - Merchant-data webhooks (uninstall, shop/update, products/*, inventory) are unaffected. Future GDPR webhooks (M3·2) must **not** be blocked for inactive tenants, because they are legal obligations.
+- **M2·3 follow-ups (PO accepted 1–3):**
+  1. **Catalog sync for every installed tenant.** The nightly catalog sync runs for live and not-live tenants alike, so the catalog of a tenant in onboarding or paused doesn't go stale. Catalog data is merchant data, not shopper data. Soft-deleted tenants are still skipped.
+  2. **Shopify API version.** Bump `shopify.api-version` from `2024-10` to a currently supported version, aligned with the TOML's `2026-10`.
+  3. **Placements are not a go-live gate.** The backend cannot see whether a theme block is placed, and install seeds all placements as enabled.
+  - Still open: where pause appears in the admin, its copy, and whether it needs a confirmation (owner `product-analyst`).
+- **PRs opened:**
+  - backend #86: M2·3 store type, onboarding status, go-live, pause, and the `wisegift.live` app-data metafield;
+  - admin #10: onboarding wizard, [DO NOT MERGE];
+  - widget #24: silent when not live;
+  - widget #25: Liquid live gate, [DO NOT MERGE].
+- Made by: Product Owner (advised by claude)
