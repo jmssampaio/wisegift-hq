@@ -356,6 +356,7 @@ Notes:
 - [ ] The choice sets `vertical_pack` and `tenants.vertical`. Fashion maps to `fashion`, Home & Decor to `home`, and General to the "Tell us more" value, or `other` if none is chosen.
 - [ ] The suggested look is applied by default, and the merchant sees it in Step 4 (Preview), where the existing preset library and custom copy remain available. Step 4's preset library is now the active pack's copy, plus the merchant's own edits.
 - [ ] The step is resumable like the rest of the wizard.
+- [ ] **Step order (DRAFT, pending PO review, 2026-10-16):** "What do you sell?" stays Step 1. It is followed by the new **Step 2 — Contact email**, which is required, pre-filled from the Shopify shop email and gates Go live. The existing steps shift by one (Catalog sync 3, Placement 4, Preview 5, Go live 6). "Step 4 (Preview)" above therefore becomes Step 5. Spec: `spec.md` → "Merchant onboarding — Onboarding wizard" → "Contact email step and go-live gate".
 
 **Configuration (Widget → Configuration)**
 - [ ] A **"Store type"** card at the top shows the active pack and a **Change** button. Change opens the picker, then the preview and confirm step from §3.3.

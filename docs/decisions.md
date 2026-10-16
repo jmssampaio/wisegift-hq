@@ -1652,3 +1652,24 @@
 - **Action (PO-approved):** a one-off `UPDATE tenants SET soft_deleted_at = NULL, updated_at = now()` for that tenant. `active` stays `false`; going live is the PO's onboarding step.
 - **Follow-up:** before switching the purge out of dry-run in any environment, review its dry-run audit lines, so no tenant that is actually in use is listed.
 - Made by: Product Owner (advised by claude)
+
+## 2026-10-16 — Merchant contact email: in-app confirmation; widget must not run before go-live
+- Context: `product-analyst` wrote the acceptance criteria for BE-3 / ADM-3 in `docs/product/spec.md`: "Contact email step and go-live gate", Q-C1..Q-C10, marked DRAFT.
+- **Decisions (PO accepted 1–7):**
+  1. **Q-C1, confirmation method.** "Confirmed" at MVP means an in-app checkbox ("This address is monitored and can receive important notices about this store") plus a click. No emailed verification link, so no new email-sending sub-processor. Revisit before the public App Store launch.
+  2. **Q-C2, onboarding step.** The contact email is a required onboarding Step 2, after "What do you sell?", with no skip. The new order is: store type, contact email, catalog sync, placement, preview, go live. The go-live gate also holds in the backend: `409 contact_email_required`.
+  3. **Q-C3, allowed uses.** The contact email is used for DPA notices (breach, sub-processor changes under 9.3, region changes under 10.3), billing and essential service notices. It is never used for marketing. Attorney to confirm.
+  4. **Q-C6, reinstall.** The stored address is kept, with a one-click "Keep this address" re-confirmation.
+  5. **Q-C7, source column.** No `contact_email_source` column.
+  6. **Q-C8, widget before go-live.** The widget must **not** run while `tenants.active = false`: no session, no recommendations, no events. Observed on staging on 2026-10-16: an inactive tenant served recommendations and recorded shopper events, so shopper-data processing started before go-live. This is a backend fix, owner `backend-engineer`.
+  7. **Q-C9, admin language.** The admin is EN-only at MVP; ES/PT come later. The widget's EN/ES/PT stays M4·1.
+- **Still open:**
+  - The PO must provide `[SUPPORT EMAIL]` (an EU-hosted role address) and `[SUPPORT RESPONSE TIME]`.
+  - Attorney: Q-C4 (the merchant-contact privacy notice and its URL; WiseGift is the controller of this address) and Q-C5 (keep the previous address as evidence of where a notice was sent).
+  - Q-C10: which billing mail WiseGift itself sends.
+- **Data model (proposal, for `backend-engineer`):**
+  - `tenants.contact_email VARCHAR(254) NULL`
+  - `tenants.contact_email_confirmed_at TIMESTAMPTZ NULL`
+  - audit table `tenant_contact_email_events (id, tenant_id, action, occurred_at)`, which stores no address and no staff identity.
+  - Next free migration number: **V10** (V7–V9 are used).
+- Made by: Product Owner (advised by claude, product-analyst)

@@ -56,6 +56,32 @@ As a merchant admin, I want to install WiseGift from the Shopify App Store (or a
 - [ ] Uninstall via Shopify triggers WiseGift's `app/uninstalled` webhook; tenant is soft-deleted (retained 30 days for reactivation, then hard-purged with all shopper events).
 - [ ] All data written during install is stored in the EU region.
 
+### Installation gate and error screens: copy and support contact (ADM-1)
+
+> **DRAFT — Q-C1..Q-C9 decided by PO 2026-10-16 (see decisions.md); copy and layout pending PO review (2026-10-16).** Copy for the screens in `embedded-admin-auth-phase1-plan.md` §4 (installation gate, not-embedded page) and §3.6 (error contract). Values in `[BRACKETS]` are placeholders **the PO fills**. Engineering must not invent them.
+
+**Support contact (one value, used everywhere):**
+- `[SUPPORT EMAIL]`: a WiseGift role address, for example `support@<wisegift domain>`. Not a personal inbox. **PO to fill.**
+- `[SUPPORT RESPONSE TIME]`: for example "within 1 business day". **PO to fill.** If the PO prefers not to promise a time, the sentence that uses it is dropped.
+- Optional `[SUPPORT URL]` (help page or form). If there is none at MVP, the copy works with the email alone.
+- The same value is used on every admin surface that says "contact support": these screens, Catalog sync ("Contact support to run more often"), the data-export request (Resolved questions, "Merchant data export SLA"), and Account → Contact email.
+- The address is shown as **visible, selectable text** as well as a `mailto:` link. Inside the Shopify admin iframe a `mailto:` link may not open a mail app, so the merchant must be able to copy the address.
+- *Flag (security-and-privacy):* the mailbox provider behind `[SUPPORT EMAIL]` receives merchant messages, which may include personal data. It should be EU-hosted, and the merchant-contact privacy notice must name it.
+
+| Screen (trigger) | Title | Body | Actions |
+|---|---|---|---|
+| **Setting up** (`409 installation_required`, then `POST /admin/v1/installation` in flight) | Setting up WiseGift… | This only takes a few seconds. | None. Non-interactive (App Store 2.3.2). A spinner with `role="status"` and `aria-busy="true"` |
+| **Still trying** (`503 platform_unavailable`, automatic retries in progress) | Setting up WiseGift… | Shopify is taking longer than usual. We're still trying. | None |
+| **Shopify unreachable** (`503` after the automatic retries are used up) | We couldn't reach Shopify | Shopify didn't respond in time. This is usually temporary. Try again in a minute. If it keeps happening, contact us at `[SUPPORT EMAIL]`. | **Try again** (re-runs the gate) |
+| **Setup failed** (`502 installation_failed`) | We couldn't finish setting up WiseGift | Something went wrong on our side, and we've been alerted. Contact us at `[SUPPORT EMAIL]` and mention the error code below. We'll get back to you `[SUPPORT RESPONSE TIME]`. Error code: `installation_failed` | **Try again**; **Copy error code** |
+| **Not embedded** (`window.shopify` missing, or `idToken()` rejects) | Open WiseGift from your Shopify admin | WiseGift runs inside your Shopify admin. Go to **Apps → WiseGift** in Shopify. Already there and still seeing this? An ad blocker or privacy extension may be blocking Shopify. Allow `admin.shopify.com` and reload. Need help? `[SUPPORT EMAIL]` | None. No data, no login form |
+| **Unexpected error** (any other failure while the gate runs, including `403`) | Something went wrong | We couldn't load WiseGift. Reload the page to try again. If it keeps happening, contact us at `[SUPPORT EMAIL]`. Error code: `<code>` | **Reload** |
+
+- [ ] The error code shown is the `code` from the backend `ErrorResponse`, or `network_error` when there is no response. No stack traces, IDs, tokens or URLs (the URL can carry `id_token`, plan S1).
+- [ ] Title as the page's `<h1>`. On every error screen, focus moves to the title, and the body is announced once (`role="alert"` on the error screens, `role="status"` on the progress screens).
+- [ ] "Try again" and "Reload" are real buttons, at least 44 × 44 px. "Copy error code" confirms with a polite status message ("Copied").
+- [ ] Copy is EN at MVP; the admin is EN-only unless the PO decides otherwise (open question Q-C9).
+
 ---
 
 ## Feature: Merchant onboarding — Onboarding wizard
@@ -72,6 +98,208 @@ As a merchant admin, I want a guided setup after install so that the widget is l
 - [ ] The onboarding wizard is resumable — closing the browser and returning drops the merchant back at the incomplete step.
 
 > **DRAFT, pending PO review (2026-10-15):** Step 1 is proposed to become "What do you sell?" (Fashion / Home & Decor / General niche packs that pre-fill existing configuration). See [`hooks-and-packs.md`](hooks-and-packs.md) §3.4.
+>
+> **DRAFT, pending PO review (2026-10-16):** a new **Step 2 — Contact email** is inserted, and a confirmed contact email gates Go live. See "Contact email step and go-live gate" below.
+
+### Contact email step and go-live gate
+
+> **DRAFT — Q-C1..Q-C9 decided by PO 2026-10-16 (see decisions.md); copy and layout pending PO review (2026-10-16).** Written by `product-analyst` for **BE-3** (backend) and **ADM-3** (admin onboarding).
+> **Sources:**
+> - `decisions.md` 2026-10-15 "Embedded admin auth…", decision 5: an explicit contact email collected in onboarding, pre-filled from the shop email, for DPA breach notices and billing. The attorney words the notice.
+> - `decisions.md` 2026-10-15 "…Phase 1 plan accepted…", PO-4: a **confirmed** contact email is required before go-live.
+> - `embedded-admin-auth-phase1-plan.md` §3.4, §4 and §7 (BE-3, ADM-3).
+> - `dpa-template.md` clause 13: WiseGift notifies the merchant of a personal-data breach within 72 hours. The DPA does not yet say *where* that notice goes; this address is the answer.
+>
+> The API and data-model blocks below are **proposals**. `backend-engineer` owns the contract and the schema.
+
+#### User stories
+- As a **merchant admin**, I want to tell WiseGift which address should receive important notices about my account and my shoppers' data, so that a security or data-protection notice reaches someone who will act on it.
+- As a **merchant admin**, I want the address pre-filled from my Shopify store, so that this step takes seconds.
+- As **WiseGift** (the merchant's processor), I want a confirmed contact for every live tenant, so that we can meet the DPA clause 13 breach-notice duty and reach the merchant about billing.
+
+#### Where it sits in onboarding
+Proposed wizard order (with the 2026-10-15 "What do you sell?" draft):
+
+| # | Step | Note |
+|---|---|---|
+| 1 | What do you sell? | `hooks-and-packs.md` §3.4 |
+| 2 | **Contact email** | New |
+| 3 | Catalog sync | The sync already starts at install (plan §3.3 step 6), so it keeps running during steps 1–2 |
+| 4 | Widget placement | |
+| 5 | Preview | |
+| 6 | Go live | Gated on a confirmed contact email |
+
+Why second:
+- **Not first:** "What do you sell?" is the step that shows the merchant their store in the product. Opening with an admin chore delays that.
+- **Not last:** at Go live the merchant wants to launch. An unexpected form at that moment feels like a blocker. Early in the flow it takes about 10 seconds and is forgotten.
+- **Covered early:** catalog data flows from install onwards. Having the contact before most of setup means WiseGift can reach the merchant about any incident during setup too.
+
+- [ ] Step 2 is required to continue the wizard. There is **no "Skip for now"**. One fewer state to handle, and with the pre-fill it costs one tick and one click.
+- [ ] The go-live gate (below) still applies as defence in depth. It covers tenants that reach Go live without the step: tenants created before ADM-3 ships (for example the staging tenant `wisegift-dev`), reinstalls, and direct navigation.
+- [ ] The wizard resumes at Step 2 while `/me` → `tenant.contactEmailConfirmed` is `false` and Step 1 is complete (plan §3.4).
+- [ ] The step is framed as a **setting**, not an account sign-up. No password, no "create account" wording. Built for Shopify 3.1.3 forbids an extra sign-up prompt (plan S5).
+
+#### Step layout and copy (EN)
+
+| Element | Copy / behaviour |
+|---|---|
+| Step heading (`<h1>` of the step) | Where should we send important notices? |
+| Intro | We use this address for security and data-protection notices about your store, and for billing. We won't use it for marketing. *(The "no marketing" clause depends on Q-C3.)* |
+| Field label (visible, always) | Contact email |
+| Helper text, while the value equals the Shopify suggestion | Suggested from your Shopify store email. Change it if someone else should get these notices. |
+| Helper text, always | Use an inbox someone checks. A shared address, like privacy@yourstore.com, keeps working when people change roles. |
+| Confirmation checkbox | This address is monitored and can receive important notices about this store. |
+| Privacy notice | **PENDING attorney wording.** Placeholder: `[ATTORNEY: short notice on how WiseGift uses and keeps this address]` plus a link "How we use your contact email" → `[MERCHANT-CONTACT PRIVACY NOTICE URL — PENDING]`. It sits directly under the checkbox, before the button. |
+| Primary button | Confirm and continue |
+| Success | The wizard moves to Step 3 and announces "Contact email confirmed". |
+
+#### Field rules
+**Pre-fill (suggestion only)**
+- [ ] On entering the step, the admin requests the live Shopify shop email (`shop-contact-suggestion`, below) and pre-fills the field with it.
+- [ ] The suggestion is **never stored by WiseGift** until the merchant confirms. It is not saved as a draft, not cached server-side, and not logged. If the merchant leaves the step without confirming, nothing is stored. On return the suggestion is fetched live again.
+- [ ] If a confirmed address already exists (resume, reinstall, revisiting the step), the field shows the **stored** address, not the suggestion.
+- [ ] If the suggestion is empty, invalid, or the request fails, the field starts empty with no error. Only the "always" helper text shows. The merchant types an address.
+- [ ] The "Suggested from your Shopify store email" helper disappears as soon as the value differs from the suggestion.
+
+**Validation**
+- [ ] Leading and trailing whitespace is trimmed. The address is otherwise stored exactly as entered: no lower-casing, because the local part is technically case-sensitive.
+- [ ] Valid means **one** address: exactly one `@`, a non-empty local part of at most 64 characters, a domain containing at least one dot, no spaces or control characters, and at most **254** characters in total. Display-name forms (`Jane <jane@shop.com>`) and lists (`a@x.com, b@y.com`) are rejected.
+- [ ] The backend is authoritative and applies the same rule. If the client accepts and the server rejects, the server message is shown on the field. *Note for backend:* Bean Validation `@Email` alone accepts `jane@localhost`; the "domain contains a dot" rule needs adding.
+- [ ] Validation runs on blur and on submit, not on every keystroke. Once a field error is shown, it re-checks on each change, so it clears as soon as the value is fixed.
+- [ ] The checkbox must be ticked to submit.
+- [ ] Error messages:
+
+| Condition | Message (shown under the field or checkbox) |
+|---|---|
+| Empty | Enter a contact email. |
+| Invalid format | Enter an email address like name@yourstore.com. |
+| Too long | This address is too long. Use one with 254 characters or fewer. |
+| More than one address | Enter one address only. To reach several people, use a shared inbox. |
+| Checkbox not ticked | Tick the box to confirm this address is monitored. |
+
+#### What "confirmed" means at MVP: recommendation
+
+**Recommendation: an explicit in-app confirmation** (the ticked checkbox plus the "Confirm and continue" click). No emailed verification link at MVP.
+
+| | In-app confirmation (recommended) | Emailed verification link |
+|---|---|---|
+| Proves | The merchant deliberately chose and vouched for the address | The address exists and someone can read it |
+| New vendor | None | An email-sending provider (for example Postmark or Amazon SES EU). It must be EU-hosted (CLAUDE.md EU-only rule). It processes merchant contact data, and every notice later sent through it |
+| Legal and doc work | None beyond the privacy notice | The vendor must be assessed and listed. Whether it belongs on `sub-processors.md` (which covers shopper data under the DPA) or only in WiseGift's own merchant-contact privacy notice is a **security-and-privacy / attorney** call. DPA clause 9.3 requires 30 days' notice to merchants for new sub-processors |
+| Engineering | One timestamp | Tokens, expiry, resend, bounce handling, SPF/DKIM/DMARC on a WiseGift domain, a "pending verification" state in the wizard and the gate |
+| Onboarding time | About 10 s | Leaves the app to open an inbox. Puts the 15-minute target at risk and adds a drop-off point |
+| Main risk | A typo or an abandoned inbox goes unnoticed until a notice bounces | Lower |
+
+Why in-app wins at MVP:
+- Pilots are onboarded hands-on through the Design Partner Program, so the PO can check the address on the kickoff call.
+- The pre-fill comes from an address Shopify already holds, which limits typos.
+- The checkbox stops a reflexive click-through.
+- Above all, it adds no vendor and no DPA or sub-processor change before the first pilot. M3·4 attorney review is already the longest lead-time item.
+
+- [ ] **Definition:** a tenant's contact email is *confirmed* when `contact_email` is non-null **and** `contact_email_confirmed_at` is non-null. Both are written together, in one request, only when the merchant submits with the checkbox ticked.
+- [ ] There is no stored "unconfirmed" address. The only states are "none" and "confirmed".
+- [ ] **Revisit trigger:** before the public App Store launch (self-serve installs with no kickoff call), or as soon as WiseGift adopts an email-sending provider for any other reason. If verification is added then, it gets its **own** column (`contact_email_verified_at`). `confirmed_at` keeps its meaning.
+
+#### Go-live gate
+- [ ] A tenant cannot be set live (`tenants.active = true`) unless its contact email is confirmed. This applies to **every** activation path: wizard Step 6, any later "Go live" or resume toggle, and re-going-live after a reinstall (PO-3).
+- [ ] **Enforced in the backend**, not only hidden in the UI. *Proposal:* the go-live command (not built yet, `architecture.md` §9.3) returns `409` with `code: contact_email_required` when the contact is not confirmed.
+- [ ] On the Go live step, a short checklist shows the prerequisites. The contact row reads either "Contact email: jane@shop.com ✓ Change" or "Contact email: not confirmed".
+- [ ] When the contact is not confirmed, an inline warning sits above the Go live button:
+  - **Title:** Add a contact email before going live
+  - **Body:** We need an address for important notices about your store, such as security and data-protection notices. It takes a few seconds.
+  - **Link:** Add contact email → Step 2, with focus on the field.
+  - After confirming there, the merchant is returned to **Step 6** (not Step 3), with focus on the Go live button and the status message "Contact email confirmed. You can go live now."
+- [ ] The Go live button uses `aria-disabled="true"` plus `aria-describedby` pointing to the warning, rather than the `disabled` attribute, so keyboard and screen-reader users can reach it and hear why. Activating it moves focus to the warning title.
+- [ ] If the backend returns `409 contact_email_required` anyway (for example a stale page), the same warning is shown.
+
+#### Editing later (Account → Contact email)
+- [ ] The Account screen (Merchant admin — Account & billing) has a **Contact email** card showing the address and "Confirmed on 16 Oct 2026", in the merchant's browser locale, plus a **Change** button.
+- [ ] **Change** turns the card into the same field, checkbox, helper text and privacy notice as Step 2. The field is pre-filled with the **stored** address (no Shopify suggestion here). The checkbox starts **unticked**, so each change is a fresh confirmation. Buttons: **Save** and **Cancel**. Cancel restores the stored value and returns focus to Change.
+- [ ] Saving writes the new address and a new `contact_email_confirmed_at` atomically. Toast: "Contact email updated".
+- [ ] Saving the **same** address again with the box ticked is allowed. It refreshes `confirmed_at` ("still correct").
+- [ ] The address **cannot be removed**, only replaced. A live tenant must always have one. The card states: "To remove this address, uninstall WiseGift. It is deleted with your store's data 30 days after uninstall."
+- [ ] Changing the address never takes a live widget offline.
+- [ ] **Audit:** every confirmation writes an audit record: tenant, timestamp, and action (`set` for the first confirmation, `changed` for a different address, `reconfirmed` for the same one).
+  - The record does **not** contain the address, old or new (data minimisation). It also has no staff identity, because decision 4 forbids storing Shopify user IDs.
+  - Whether the previous address must be kept as evidence for a breach notice is attorney question Q-C5.
+  - At MVP, WiseGift sends no "your contact email changed" mail to the old address, because there is no email-sending provider.
+
+#### Reinstall
+- [ ] On reinstall within 30 days (PO-3), the stored address and `confirmed_at` are kept. Step 2 shows the stored address with its "Confirmed on…" date and a **Keep this address** button, alongside Change. *Keep this address* counts as a re-confirmation (`reconfirmed`). *Proposal; see Q-C6.*
+- [ ] After a hard purge (> 30 days), the merchant starts as a new tenant and Step 2 behaves as a first install.
+
+#### Privacy and retention
+- [ ] The address is used only for: personal-data breach notices (DPA clause 13), other notices the DPA requires (pending Q-C3: sub-processor changes under clause 9.3, region changes under 10.3), essential service and security notices, and billing. It is **not** used for marketing.
+- [ ] It is never logged, never included in error bodies or analytics, never part of CSV exports, and never sent to OpenAI or any other sub-processor.
+- [ ] It is not returned by `/me`. Only the boolean `contactEmailConfirmed` is.
+- [ ] Retention: it lives on the `tenants` row, so it is kept while the tenant exists, including the 30-day soft-delete window (a breach affecting retained data must still be notifiable). The tenant hard purge (M3·1) deletes the `tenants` row, and with it the address. The audit records are tenant-scoped and are purged with it. Backups follow DPA clause 14.4.
+- [ ] *Flag (security-and-privacy / attorney):* WiseGift is the **controller** of this address, not the merchant's processor: it is a merchant staff or role contact, not shopper data. It therefore needs WiseGift's own privacy notice for merchant contacts (purpose, legal basis, retention, recipients). It is an exception to decision 4 ("no merchant-staff personal data") explicitly made by decision 5. The DPA should name this contact as the clause 13 notice address. The shared-inbox helper text reduces how often the address is personal data at all.
+
+#### States and errors (Step 2 and the Account card)
+
+| State | Behaviour |
+|---|---|
+| Loading the suggestion or the stored value | Field disabled with a skeleton, under 1 s target. If it takes longer than 3 s, the field is enabled empty and the late response is ignored if the merchant has started typing |
+| Suggestion unavailable | Empty field, no error (above) |
+| Submitting | Button shows a spinner after 300 ms and sets `aria-busy="true"`; the field and checkbox are read-only. No double submit |
+| `400` validation from server | Server message shown on the field (or on the checkbox for `confirmation_required`); focus moves to the field |
+| `503` / network failure | Inline banner above the button: "We couldn't save your contact email. Check your connection and try again." The entered value and checkbox are kept; nothing is stored |
+| `401` | Handled by the admin client (one retry with a fresh token, plan §4). If it still fails, the "Unexpected error" screen (install feature above) |
+| `409 installation_required` | Back to the installation gate (plan §4) |
+| Success | Step 2: advance to Step 3 (or back to Step 6 when coming from the gate). Account: card returns to read mode with the new date and a toast |
+
+#### Accessibility
+- [ ] Native `<input type="email" autocomplete="email">` with a visible `<label>`. Helper text, privacy notice and error are linked with `aria-describedby`. On error: `aria-invalid="true"` and the message as text, never colour alone.
+- [ ] Native checkbox with a visible, clickable label. Its error is linked with `aria-describedby`.
+- [ ] On entering the step, focus goes to the step heading. On a submit error, focus moves to the first invalid control. Success messages are announced through a `role="status"` region.
+- [ ] All controls are keyboard-operable, at least 44 × 44 px, with a visible focus indicator; they follow the admin's existing component styles. Text contrast at least 4.5:1, and control borders at least 3:1.
+- [ ] Works at 320 px width and at 200% zoom without loss of content.
+
+#### Data model: proposal for `architecture.md` §8 (`tenants`)
+
+> **PROPOSAL — DRAFT, pending PO review; `backend-engineer` owns the schema.** Not yet copied into `architecture.md` §8. Once accepted, it lands there before BE-3 merges (plan §3.4 prerequisite).
+
+| Column | Type | Notes |
+|---|---|---|
+| contact_email | VARCHAR(254) | Nullable. The merchant-confirmed contact for DPA notices and billing. Trimmed, otherwise stored as entered. Written only together with `contact_email_confirmed_at`. Never logged. Controller data of WiseGift (not shopper data). Deleted with the `tenants` row at hard purge (M3·1) |
+| contact_email_confirmed_at | TIMESTAMPTZ | Nullable. Set to `now()` on every merchant confirmation (first set, change, re-confirm). "Confirmed" = both columns non-null. Gates go-live |
+
+- **`contact_email_source`: recommended NOT to add at MVP.** Its values would be `shop_suggestion` or `merchant_entered`. It would tell us how often merchants keep the Shopify address, but nothing in the product or the DPA duty depends on that. To fill it reliably the server would need to fetch the shop email again at save time, an extra Shopify call. Easy to add later. PO may overrule (Q-C7).
+- **Audit table (proposed name `tenant_contact_email_events`):** `id`, `tenant_id UUID NOT NULL`, `action VARCHAR(16)` (`set` / `changed` / `reconfirmed`), `occurred_at TIMESTAMPTZ`. No address column. Tenant-scoped, purged with the tenant. This follows the same pattern as the D4 holdout-split audit.
+- **Retention row** for §8 "Data retention": "`tenants.contact_email`: kept for the tenant's lifetime, including the 30-day soft-delete window; deleted by the tenant hard purge (M3·1)."
+- The plan's migration name `V7__tenants_contact_email.sql` may need renumbering: decisions.md 2026-10-15 already lists a "V7 consent backfill". `backend-engineer` to check.
+
+#### API contract sketch for BE-3
+
+> **PROPOSAL — DRAFT, pending PO review. The backend defines the contract.** This sketch starts from plan §3.4, with three deviations, all marked. The tenant comes only from the verified principal (plan §3.1).
+
+- `GET /admin/v1/tenant/contact` → `200 { contactEmail: string | null, confirmedAt: string (ISO-8601 instant) | null }`.
+- `PUT /admin/v1/tenant/contact`, body `{ contactEmail: string, confirmed: true }`.
+  - Sets `contact_email` and `contact_email_confirmed_at = now()` atomically, and writes the audit record.
+  - Errors: `400 invalid_contact_email` (format or length) and `400 confirmation_required` (`confirmed` missing or not `true`).
+  - **Deviation 1:** the required `confirmed: true` literal. Plan §3.4 has `{ contactEmail }` only. The literal makes the merchant's act explicit in the contract, so no future client can silently save the Shopify suggestion. That would break the "never stored until confirmed" rule.
+  - **Deviation 2:** respond `200` with the GET body instead of `204`, so the UI can show the new "Confirmed on" date without a second call. This matches the widget-config pattern, where mutations return the full resource. Either is fine for the UX.
+- `GET /admin/v1/platform/shop-contact-suggestion` → `200 { suggestedEmail: string | null }`.
+  - Read live from Shopify (`shop.email`), never persisted, never logged.
+  - **Deviation 3:** if Shopify fails or the email is absent, return `200 { suggestedEmail: null }` rather than an error, because the UI treats both cases the same (empty field). The failure is logged without the address.
+- `GET /admin/v1/auth/me` → `tenant.contactEmailConfirmed: boolean` (plan §3.6). The address itself is not in `/me`.
+- Go-live command (not built): `409 contact_email_required` when not confirmed (gate above).
+- All responses: `Cache-Control: no-store` (plan F-F). Tenant-isolation tests: tenant A can neither read nor write B's contact (plan §3.7 `TenantContactIT`), plus a test that the suggestion endpoint persists nothing.
+
+#### Open questions (contact email)
+
+| # | Question | Owner |
+|---|---|---|
+| Q-C1 | Accept the in-app confirmation (checkbox + click) for MVP, with the revisit trigger "before public App Store launch"? | PO |
+| Q-C2 | Accept Step 2 placement and "no skip"? | PO |
+| Q-C3 | Allowed uses: breach notices + billing (decided). May it also carry other DPA notices (sub-processor changes, clause 9.3; region change, 10.3) and essential service notices? Recommendation: yes; never marketing without a separate opt-in. | PO + attorney |
+| Q-C4 | Privacy notice for merchant contacts (WiseGift as controller), its URL, and the short in-app wording. The DPA should name this address as the clause 13 notice point. | attorney (via security-and-privacy) |
+| Q-C5 | Must WiseGift keep the previous address (and when it changed) as evidence of where a notice was sent? The audit proposal stores timestamps only. | attorney |
+| Q-C6 | On reinstall, keep the stored address with a one-click "Keep this address", or force a fresh entry? | PO |
+| Q-C7 | Add `contact_email_source`? Recommendation: no. | PO + backend-engineer |
+| Q-C8 | Does the widget serve (and record events) while `tenants.active = false`? If it does, shopper-data processing starts before Go live, and the gate does not protect what it is meant to. | backend-engineer + frontend-engineer |
+| Q-C9 | Admin language: EN-only at MVP, or EN/ES/PT like the widget? Affects all copy above. | PO |
+| Q-C10 | Billing runs through Shopify App Store billing (pilots are free). What billing communication does WiseGift itself send to this address? Only the Stripe safety net? | PO + marketing-manager |
 
 ---
 
@@ -275,11 +503,17 @@ As a merchant admin, I want to see the widget's impact on my store in one screen
 
 - [ ] Default date range: last 30 days. Configurable ranges: 7d, 14d, 30d, 90d. Ranges and daily trend points use **UTC day boundaries**, and the UI labels them "UTC" (M1·2 D9).
 - [ ] **Population** (M1·2 D2): lift KPIs default to **triggered sessions**, meaning sessions that submitted the intent form. A secondary **store-level view** (all sessions that saw the widget, `shown`) is available through a population switch on the same screen. The active population is named in the screen header and in the CSV.
-- [ ] **Lift tiles**, each shown as `exposed vs holdout` with lift percentage and a significance flag. **Green** = significant positive (p < 0.05). **Red** = significant negative (M1·2 D7). **Grey** = not significant, or not enough data yet:
-  - **Widget CTR** (widget_engaged / widget_shown)
+- [ ] **Lift tiles** (three), each shown as `exposed vs holdout` with lift percentage and a significance flag. **Green** = significant positive (p < 0.05). **Red** = significant negative (M1·2 D7). **Grey** = not significant, or not enough data yet:
   - **Conversion rate**: sessions with ≥ 1 order inside the 7-day attribution window / sessions in the active population.
   - **AOV** for attributed orders, exposed vs holdout.
   - **Revenue per session**: attributed order revenue / sessions in the active population.
+- [ ] **Data checks (A/A integrity, no lift claim)** (`decisions.md` 2026-10-15 "M1·2 P1–P3", P2; 2026-10-16 C5). The hook is identical in both arms, so these rates should match between exposed and holdout. A difference means the measurement is broken, not that WiseGift works:
+  - **Widget CTR**: engagement at or before `t₀`, in `shown` sessions. It is **not** a lift tile.
+  - **Trigger rate** (formerly `intent_submit_rate`).
+  - **Sample-ratio check (SRM)** on `shown` and on the active population.
+  - They are shown in a "Data checks" panel with a pass / failed status per check, never with green/red lift colouring or a lift percentage.
+  - If any check fails (p < 0.01), every lift tile turns grey and the panel explains: "A data check failed, so lift results are hidden until we've looked into it." Definitions: `m1-2-lift-measurement.md` §2.1.
+  - *DRAFT — Q-C1..Q-C9 decided by PO 2026-10-16 (see decisions.md); copy and layout pending PO review (2026-10-16):* the panel layout and copy are new. The P2 rule itself is decided.
 - [ ] **Revenue** is Shopify `total_price`. That is gross: shipping and tax included, before refunds. Tiles and the CSV label it "Gross order value (incl. shipping & tax, before refunds)" (M1·2 D8).
 - [ ] **Recommendation diagnostics (exposed only, no lift claim)** replace the former add-to-cart tile (M1·2 D1). They are shown as absolute rates for the exposed arm, with no holdout column, no lift percentage and no significance colour:
   - **Rec click-through**: triggered exposed sessions with ≥ 1 `product_clicked` after the trigger.
@@ -305,6 +539,8 @@ As a merchant admin, I want to see my plan and usage so that I know when I'm app
 - [ ] Billing is handled via Shopify's built-in App Store billing API for public-app installs (recurring subscription with usage-based overage). Pilot tenants show "Pilot — free through YYYY-MM-DD" with no billing hooks.
 - [ ] If the merchant hits their monthly cap, the widget serves precomputed cold recs only (no live LLM) and the admin dashboard shows a persistent banner with an upgrade CTA.
 - [ ] Merchant can cancel or downgrade from within Shopify (App Store billing is authoritative).
+
+> **DRAFT, pending PO review (2026-10-16):** the Account screen gains a **Contact email** card (view, change with re-confirmation, no removal). See "Merchant onboarding — Onboarding wizard" → "Contact email step and go-live gate" → "Editing later".
 
 ---
 
@@ -395,6 +631,7 @@ As the founder, I want the AI cost of running the product to be bounded regardle
 
 ### What we store
 - **Per tenant:** identity (shop domain, Shopify shop ID, region, plan), catalog snapshot with embeddings, widget config, placement config, feature flags.
+  - *DRAFT, pending PO review (2026-10-16):* plus the merchant-confirmed **contact email** and its confirmation timestamp. WiseGift is the controller of that address; it is not shopper data. The Shopify shop email is read live as a suggestion and never stored. See "Contact email step and go-live gate".
 - **Per session:** anonymous session ID, exposed/holdout assignment, events (widget_shown, widget_engaged, intent_submitted, product_clicked), intent submissions (recipient relationship, occasion, budget, interests — no free-text PII).
 - **Per order:** filtered order payload — `order_id`, line items (product IDs, quantities, prices), total, currency, order `created_at`, receipt time, tenant, plus the widget `session_id` when the order carries a marker. No customer identifiers. The `session_id` is pseudonymous, and through the `_wg_session` cart attribute it can be joined to the merchant's identified customer (`decisions.md` 2026-10-14). That is why it is nulled at 120 days (below).
 
