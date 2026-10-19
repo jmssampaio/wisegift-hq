@@ -274,6 +274,8 @@ Normative detail: `docs/engineering/m1-2-lift-measurement.md` (populations §1, 
 
 ## 8. Database schema
 
+> **Factual correction (2026-10-19, backend-engineer).** This section was reconciled against the real backend schema (Flyway `V1`–`V15`) and the JPA entities on `develop`, as input to the record-of-processing review. Changes: added the columns `tenants.currency`/`vertical_pack`/`store_type_set_at`/`live_since`, `events.pre_intent_recs`, `orders_attributed.is_test`, `tenant_products.embedding_source_hash`/`excluded_reason`, and the `widget_config` hook/trigger/intent-form columns; corrected `orders_attributed.attribution_source` from "PROPOSED, not built" to built (V7); added the `widget_config_events` and `budget_tier_sets` tables. **Known remaining discrepancy:** the `tenants.holdout_percent` column and a `tenant_holdout_changes` table are described below but are **not** in the real schema (no entity field, no migration; `ddl-auto=validate` would reject them) — left in place pending a PO decision on whether they are planned or should be struck.
+
 Every table below has `tenant_id UUID NOT NULL` except `tenants` itself and the platform-integration OAuth store (which uses `tenant_id` as its own PK link).
 
 ### `tenants`
@@ -294,6 +296,10 @@ Platform-agnostic. The identifiers a merchant carries on their source platform (
 | active | BOOLEAN | `false` until onboarding wizard completes. The widget only runs for a **live** tenant (`active = true` and `soft_deleted_at IS NULL`): otherwise every `/widget/v1/*` call is refused with 403 (decisions.md 2026-10-16 Q-C8; backend PR #85). Going live requires a confirmed contact email (`409 contact_email_required`, M2·3) |
 | contact_email | VARCHAR(254) | Nullable. Merchant's notice address (DPA notices, billing, essential service notices; never marketing). Stored trimmed, as entered; never logged. Set only together with `contact_email_confirmed_at` (CHECK: both null or both set). See decisions.md 2026-10-16 "Merchant contact email…" (BE-3, V10) |
 | contact_email_confirmed_at | TIMESTAMPTZ | Nullable. Set to now() on every in-app confirmation (first set, change, re-confirm). Non-null = confirmed; gates go-live |
+| vertical_pack | VARCHAR(16) | NOT NULL DEFAULT `general`; CHECK `fashion` \| `home_decor` \| `general`. Niche-pack choice from onboarding Step 1 ("What do you sell?"), written together with `vertical` (M2·3, V11) |
+| store_type_set_at | TIMESTAMPTZ | Nullable. Set on every Step-1 answer. NULL = merchant has never answered; distinguishes "never chosen" from the `general` default (V11) |
+| live_since | TIMESTAMPTZ | Nullable. Stamped by the go-live command; kept on pause/reinstall, overwritten on the next go-live. Existing live tenants were backfilled from `updated_at` (V11) |
+| currency | VARCHAR(3) | Nullable; CHECK `^[A-Z]{3}$`. Shop's ISO 4217 currency read from Shopify `shop.json` at install and refreshed on `shop/update` (F2, V14). NULL = unknown; widget then shows budget tier names only (OQ-3) |
 | soft_deleted_at | TIMESTAMPTZ | Nullable |
 | created_at | TIMESTAMPTZ | |
 | updated_at | TIMESTAMPTZ | |
@@ -328,7 +334,7 @@ Audit trail of contact-email confirmations (BE-3, V10). Stores **no address and 
 
 ### `admin_users`
 
-Merchant admin identity. MVP is one row per tenant.
+Merchant admin identity. MVP is one row per tenant. **Factual note (2026-10-19):** the live embedded-admin path authenticates with Shopify App Bridge session tokens (`ShopifyIdTokenVerifier` → `PlatformAdminAuthenticator`); that path reads only the shop host from the token (the `sub`/`sid`/`jti` staff claims are never read, stored, or logged) and never touches this table. `admin_users` is written only by the legacy email/password + Google path (`AdminAuthenticationService`, `AdminAuthController`), which the embedded model supersedes; the table still exists and may hold legacy rows.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -359,7 +365,9 @@ Per-tenant catalog snapshot. One row per Shopify product per tenant.
 | tags | TEXT[] | Shopify tags |
 | available | BOOLEAN | True if any variant in stock |
 | content_hash | VARCHAR(64) | SHA-256 of title+description+type+tags; drives embed recompute decision |
+| excluded_reason | VARCHAR(16) | Nullable; CHECK `GIFT_CARD` \| `UNPUBLISHED`. NULL = recommendable. Set from full product payloads only (full sync, products/create, products/update); the price refresh and inventory webhook never touch it (OQ-9, V13) |
 | embedding | vector(1536) | pgvector; nullable while awaiting first embed pass. 1536d matches OpenAI `text-embedding-3-small` |
+| embedding_source_hash | VARCHAR(64) | Nullable. The `content_hash` the current embedding was computed from; comparing it against the live `content_hash` tells the embed pass whether the vector is stale without a provider round trip (V2) |
 | embedding_model_version | VARCHAR(32) | e.g. `text-embedding-3-small`; nullable if embedding is null |
 | last_seen_at | TIMESTAMPTZ | Updated on catalog sync + webhook |
 | last_embedded_at | TIMESTAMPTZ | Nullable |
@@ -416,6 +424,12 @@ Composite PK `(tenant_id, version)`.
 | border_radius_px | INTEGER | Reused by the theming pathway as the source of `--wg-border-radius`; not duplicated inside `theme_tokens` |
 | recs_per_widget | INTEGER | 3–10 |
 | placements_enabled | TEXT[] | e.g. `["home_hero", "pdp_slot", "gift_finder"]` |
+| placement_hooks | JSONB | NOT NULL DEFAULT `{}`. Per-placement hook copy overrides, now nested `placement → language → field → string` (e.g. `{"pdp_slot": {"en": {"headline": "..."}}}`). Only populated entries override the code-level default (V3, reshaped V12). No shopper data |
+| intent_form_fields | JSONB | NOT NULL, default `{"relationship":"required","occasion":"required","budget":"required","interests":"optional"}`. Independent `required` \| `optional` \| `hidden` visibility per intent field (V5). This is merchant *configuration* of which questions the widget asks — not any shopper answer |
+| trigger_mode | VARCHAR(16) | NOT NULL DEFAULT `side_tab`; CHECK `side_tab` \| `pill`. Floating-trigger style, moved from the theme block to admin (V12) |
+| trigger_position | VARCHAR(16) | NOT NULL DEFAULT `bottom_right`; CHECK `bottom_right` \| `bottom_left` (V12) |
+| trigger_background_color | VARCHAR(7) | Nullable hex; NULL = inherit accent background (V12) |
+| trigger_text_color | VARCHAR(7) | Nullable hex; NULL = contrast-picked text (V12) |
 | theme_tokens | JSONB | Merchant-set design-token overrides. Nullable, defaults `{}`; only explicitly-set overrides live here (unset tokens fall through to the Shopify theme variable, then the WiseGift default — see §10.5). Shape below |
 | updated_at | TIMESTAMPTZ | |
 
@@ -432,6 +446,36 @@ Composite PK `(tenant_id, version)`.
 | card_shadow | VARCHAR(8) | Enum: `none` \| `subtle` \| `medium`. Resolved to a preset shadow definition inline by the widget (see §10.5). No Shopify equivalent |
 
 Note: `border_radius_px` lives on the `widget_config` row itself (existing column), not inside `theme_tokens`. The widget resolves it to `--wg-border-radius` at mount alongside the JSONB overrides.
+
+### `widget_config_events`
+
+Change-date log for lift readouts (V12): a copy, trigger or pack change moves the treatment for both arms at once. **Stores when and where a change happened, never the copy text itself** — no shopper data, no merchant free text. Purged with the tenant.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | BIGSERIAL | PK |
+| tenant_id | UUID | NOT NULL, FK to `tenants`; index `(tenant_id, occurred_at)` |
+| kind | VARCHAR(16) | CHECK `copy` \| `copy_reset` \| `trigger` \| `pack` |
+| placement | VARCHAR(32) | Nullable |
+| language | VARCHAR(2) | Nullable |
+| occurred_at | TIMESTAMPTZ | NOT NULL |
+
+### `budget_tier_sets`
+
+Computed budget tier edges per tenant (V15, budget-tiers.md §1.8). One row per tier-set version; a new row is written only when the §1.6 hysteresis rule adopts a change. Inactive rows are retained so an event's tier-set version maps back to the exact edges shown. Derived from the merchant catalog's price distribution — no shopper data.
+
+| Column | Type | Notes |
+|---|---|---|
+| tenant_id | UUID | NOT NULL, FK to `tenants`; composite PK `(tenant_id, version)` |
+| version | INTEGER | NOT NULL |
+| source | VARCHAR(16) | CHECK `catalogue` \| `pack_default` \| `custom` \| `none` |
+| edges | INTEGER[] | NOT NULL. Tier boundary values |
+| currency | VARCHAR(3) | Nullable; CHECK `^[A-Z]{3}$` |
+| product_count | INTEGER | NOT NULL. Products the set was computed over |
+| tier_counts | INTEGER[] | NOT NULL. Product count per tier |
+| algorithm_version | VARCHAR(16) | NOT NULL |
+| active | BOOLEAN | NOT NULL. Exactly one active row per tenant (partial unique index `uq_budget_tier_sets_active`) |
+| computed_at | TIMESTAMPTZ | NOT NULL |
 
 ### `precomputed_recs`
 
@@ -470,21 +514,25 @@ Widget event stream (append-only).
 | rank_score | DECIMAL(6,4) | Nullable |
 | served_from | VARCHAR(16) | Nullable |
 | intent_form_schema_version | INTEGER | Nullable. Set only when `event_type='intent_submitted'`; identifies which `intent_form_schemas.version` the payload conforms to, so the v2 learning loop can read historical events across schema upgrades without a backfill. See `decisions.md` 2026-09-29 |
+| pre_intent_recs | BOOLEAN | NOT NULL DEFAULT `false` (V7). True only on a `widget_shown` whose mount renders recs before any intent, making that `widget_shown` the session's trigger (M1·2 P1 / G13). Normalised to false on any other event type |
 | occurred_at | TIMESTAMPTZ | |
+
+**No shopper-answer columns.** The `events` table stores no `relationship`, `occasion`, `budget`, or free-text `interests` — only the enumerated `event_type`/`placement`/`intent_mode` plus the product/rank/served-from telemetry above. The shopper's intent-form answers are never persisted here or anywhere else (see §5 / §12).
 
 ### `orders_attributed`
 
-Order webhook, filtered at ingest (no customer PII).
+Order webhook, filtered at ingest (no customer PII). Orders are stored regardless of whether the shopper ever saw the widget (unattributed orders have a NULL `session_id` and feed merchant-wide baselines). Orders for a **non-live tenant** (`active = false`, soft-deleted, or missing) are dropped before any dedup read, persist, or body-field logging — no shopper-data processing before go-live (`OrderAttributionIngestService`, decisions.md 2026-10-16 Q-C8; the controller still answers 200).
 
 | Column | Type | Notes |
 |---|---|---|
 | platform_order_id | VARCHAR(64) | PK |
 | tenant_id | UUID | |
 | session_id | UUID | Nullable if not correlated. Pseudonymous personal data. **Nulled at 120 days** (retention, below) |
-| attribution_source | VARCHAR(16) | **PROPOSED, not built** (M1·2 G2, `m1-2-lift-measurement.md` §3.1 / §8). Nullable. Which marker produced `session_id`: `note_attribute` (the `_wg_session` or legacy `wg_session` cart attribute, written for both arms), `landing_site` or `referring_site` (URL marker, exposed-only). Lift uses `note_attribute` only; until this column exists, the analytics response flags `attributionSourceMixed: true` |
+| attribution_source | VARCHAR(16) | Built (V7); CHECK `note_attribute` \| `landing_site` \| `referring_site`. Nullable. Which marker produced `session_id`: `note_attribute` (the `_wg_session` or legacy `wg_session` cart attribute, written for both arms), `landing_site` or `referring_site` (URL marker, exposed-only). Lift uses `note_attribute` only; rows ingested before V7 have a NULL source and the analytics response flags `attributionSourceMixed: true` |
+| is_test | BOOLEAN | NOT NULL DEFAULT `false` (V7). Set from the Shopify order `test` flag. Test checkouts are kept but excluded from every lift readout (G6 / spec §3.1.5) |
 | total_price | DECIMAL(12,2) | Shopify `total_price`: gross, incl. shipping and tax, before refunds (M1·2 D8) |
 | currency | VARCHAR(3) | |
-| line_items | JSONB | `[{platform_product_id, quantity, price}, ...]`; only these fields retained |
+| line_items | JSONB | `[{platform_product_id, quantity, price}, ...]`; only these three fields are mapped from the webhook. The PII drop happens in `ShopifyWebhookController.mapWebhookNodeToOrderData` **before** persist/publish/log: `customer`, `email`, `phone`, `billing_address`, `shipping_address`, and `client_details` are never read, so they have no path into the system |
 | created_at | TIMESTAMPTZ | Shopify order `created_at`. The attribution-window clock (`m1-2-lift-measurement.md` §3.2) and the 18-month retention clock. Falls back to `received_at` when null |
 | received_at | TIMESTAMPTZ | Webhook receipt time |
 
