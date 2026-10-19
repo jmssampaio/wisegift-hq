@@ -103,65 +103,83 @@ browser:
   identifier.
 
 **6.2 Widget interaction events**, tagged with the anonymous session
-identifier:
+identifier. The `events` table stores only non-content telemetry
+columns:
 
 - event type (`widget_shown`, `widget_engaged`, `intent_submitted`,
-  `product_clicked`),
-- placement, intent mode (self / gift), holdout flag, timestamp,
-- for intent submissions: the visitor's selected recipient relationship
-  (Partner / Family / Friend / Colleague / Other), occasion (from a
-  fixed list), budget band, and optional free-text interest chips
-  (maximum 5). Free text may incidentally contain personal or sensitive
-  information the visitor chooses to type. A short notice next to the
-  field ("Don't include personal details") is planned, not yet shipped;
-  see `consent-position.md` §5,
-  > *DRAFT — pending PO + attorney review.* Free-text caveat added.
-  > **ATTORNEY QUESTION (Art. 9):** see `consent-position.md` §5.
-- for product clicks: the platform product identifier of the clicked
-  recommendation.
-- for intent submissions where the widget shows the budget step: the
-  budget option the visitor chose, recorded only as a position in the
-  Merchant's price-tier list (`tier0`–`tier3`), "Any price", or "not
-  asked"; the position of the tier the widget suggested, if one was
-  shown; whether the visitor changed the budget selection; and the
-  version number of the Merchant's price-tier list in force. These
-  fields hold no amount, no free text, and no recipient relationship or
-  occasion.
+  `product_clicked`), placement, intent mode (self / gift / none),
+  holdout flag, and timestamp;
+- for served recommendations and product clicks: the platform product
+  identifier, a rank score, and a served-from marker (precomputed,
+  live, or cache);
+- the version number of the intent form schema in force, and a
+  pre-intent-recommendations marker.
 
-> *DRAFT — pending PO + attorney review.* Budget-step bullet added for
-> `docs/engineering/budget-tiers.md` §4.2 (decisions.md 2026-10-17,
-> OQ-6). Accurate only once the four fields ship as specified there.
-> **Open accuracy point:** the intent-submission bullet above lists
-> relationship, occasion, budget band and free-text interests as event
-> data. The 2026-10-17 Q-F3 resolution (`hooks-and-packs.md` §5) states
-> that `intent_submitted` and the `events` table store no relationship
-> or occasion field. `backend-engineer` must confirm which intent fields
-> `events` actually stores today, and that bullet must then be
-> corrected. The suggested-tier position is derived from the visitor's
-> relationship and occasion answers by a fixed table, so it reveals
-> them coarsely. See clause 7.1(d).
+The `events` table holds **no shopper intent answers**. The recipient
+relationship, occasion, budget and optional free-text interest chips a
+visitor submits are **never persisted on any WiseGift table** and have
+no column (there is no intent payload or JSON column). On a live
+recommendation request those answers are transiently transmitted to
+OpenAI (clauses 7.2 and 10.2) and then reduced to a one-way SHA-256
+hash that forms part of the 24-hour response cache key; the plaintext
+intent is not retained. No session identifier or shopper identifier is
+sent to OpenAI. The locus of the special-category (Art. 9) concern is
+therefore this transient transfer to OpenAI — free text may incidentally
+contain personal or sensitive information the visitor types — not stored
+data. A short notice next to the field ("Don't include personal
+details") is planned, not yet shipped; see `consent-position.md` §5.
+
+> *DRAFT — pending PO + attorney review.* 6.2 corrected to the real
+> `events` columns established from the backend (Flyway V1–V15): id,
+> tenant_id, session_id, event_type, placement, intent_mode, is_holdout,
+> platform_product_id, rank_score, served_from,
+> intent_form_schema_version, pre_intent_recs, occurred_at. This settles
+> gaps G1 / G7: the earlier draft wrongly listed relationship, occasion,
+> budget band and free-text interests as stored event data. They are not
+> stored; they are a transient transfer to OpenAI plus a one-way hash
+> (clauses 7.2, 10.2).
+> **ATTORNEY QUESTION (Art. 9):** see `consent-position.md` §5.
+> **Budget-step fields not built.** The budget-step event fields
+> (`budgetChoice`, `budgetSuggestedTier`, `budgetInteracted`,
+> `budgetTierSetVersion`) approved with conditions on 2026-10-17 are
+> **not among the current `events` columns** and are not yet shipped.
+> This clause must be updated to list them only once they ship.
 
 **6.3 Filtered order data**, received from the Merchant's e-commerce
 platform via webhook and filtered at ingest:
 
-> *DRAFT — pending PO + attorney review.* Session-identifier sources made
-> explicit.
+> *DRAFT — pending PO + attorney review.* Order fields completed from the
+> backend (V7): added `received_at`, the `is_test` flag and
+> `attribution_source`; added the treatment of unattributed and
+> pre-go-live orders. This settles gap G5.
 
 - order identifier, line items (platform product identifier, quantity,
-  price), total price, currency, timestamp, and the anonymous session
-  identifier, where present in the order's cart attributes
-  (`note_attributes`) or, secondarily, in the order's landing or
-  referring URL.
+  price), total price, currency, the order's creation timestamp and the
+  time WiseGift received it (`received_at`), a test-order flag
+  (`is_test`), an attribution-source marker recording how the session
+  was matched (`note_attribute`, `landing_site` or `referring_site`),
+  and the anonymous session identifier, where present in the order's
+  cart attributes (`note_attributes`) or, secondarily, in the order's
+  landing or referring URL.
 
-**6.4 Categories of data that are NEVER processed.** WiseGift never
-receives, requests, or stores:
+Orders where no identifier is present — including orders from shoppers
+who never saw the widget, and accelerated-checkout orders that carry no
+cart attribute — are still stored, with a null session identifier, to
+provide merchant-wide baselines. Orders received for a tenant that is
+not yet live are dropped and never stored.
 
-> *DRAFT — pending PO + attorney review.* The former "any join key
-> against [the Merchant's customer database]" wording is no longer
-> accurate on Shopify and has been replaced; see clause 6.5.
+**6.4 Categories of data that are NEVER stored.** WiseGift does not
+store:
+
+> *DRAFT — pending PO + attorney review.* IP address and user-agent moved
+> out of the "never received" list: every HTTP request carries them, so
+> the accurate statement is that WiseGift's application never stores or
+> logs them, while the hosting provider's request logs may hold them.
+> This settles gap G2. The former "any join key against the Merchant's
+> customer database" wording was already replaced; see clause 6.5.
 
 - the visitor's name, e-mail address, postal address, telephone
-  number, IP address, or user-agent string;
+  number;
 - the visitor's payment or financial data;
 - the Merchant's customer records or any customer identifier from the
   Merchant's platform. WiseGift does not link session identifiers to
@@ -169,6 +187,13 @@ receives, requests, or stores:
   writes into the Merchant's platform order records;
 - any cross-storefront browsing behaviour or third-party profile
   enrichment.
+
+**IP address and user-agent.** WiseGift's application does not store or
+log the visitor's IP address or user-agent string anywhere in its
+application data. Because these are carried on every HTTP request, the
+hosting provider's request logs (Render) may hold them for operational
+and security purposes; retention of those hosting logs is
+`[N days — TO CONFIRM — devops]`. See `record-of-processing.md` §B3.
 
 Customer identity fields present on the raw order webhook payload
 (`customer`, `billing_address`, `shipping_address`, `email`, `phone`,
@@ -258,7 +283,10 @@ identifier and cart attribute left by an earlier visit.
   not used to rank recommendations, to build a profile of a visitor
   beyond the current session, or for any decision about a visitor.
 
-> *DRAFT — pending PO + attorney review.* Purpose (d) added for the
+> *DRAFT — pending PO + attorney review.* Purpose (d) is forward-looking:
+> the budget-step event fields it relies on are **not yet built** (see
+> clause 6.2) and are not among the current `events` columns, so this
+> purpose does not describe current processing. It was added for the
 > budget-step fields (clause 6.2; `budget-tiers.md` §4).
 > **ATTORNEY QUESTION (Art. 28(10)):** `budget-tiers.md` §4.4 reports
 > the budget metrics fleet-wide and uses them to recalibrate WiseGift's
@@ -416,9 +444,20 @@ Data described in clause 6. Error responses do not leak internal
 state.
 
 **11.8 Merchant admin authentication.** Merchant admin users
-authenticate via e-mail and password (hashed with a modern
-memory-hard function) or Google OAuth. Session cookies are HTTPOnly,
-SameSite=Lax, and Secure.
+authenticate through the e-commerce platform's embedded session-token
+model. On Shopify, every admin API call carries a Shopify App Bridge
+session (ID) token, which the backend verifies in memory (signature,
+`aud` / `dest` / `exp` / `nbf`); the tenant is derived solely from the
+verified shop claim. WiseGift stores no merchant-staff credentials: no
+e-mail addresses, password hashes, or third-party identity-provider
+identities, and the token's `sub` / `sid` / `jti` claims are never read,
+stored, or logged. A legacy e-mail/password and Google OAuth path
+(`admin_users`) remains in the codebase from the retired cookie-login
+flow and is scheduled for removal; the embedded path never touches it.
+
+> *DRAFT — pending PO + attorney review.* 11.8 corrected to the embedded
+> Shopify session-token model (settles gap G3). The earlier text
+> described the retired e-mail/password + Google OAuth cookie login.
 
 **11.9 OAuth token storage.** E-commerce platform OAuth tokens are
 encrypted at rest with a key managed in a dedicated secrets manager
@@ -469,6 +508,15 @@ then known, the nature of the breach, categories and approximate
 volume of Data Subjects and records affected, likely consequences,
 measures taken or proposed, and a contact point for further
 information.
+
+Notifications are sent to the Merchant's confirmed contact e-mail
+address (`tenants.contact_email`, captured at the onboarding
+contact-email step). It is the Merchant's responsibility to keep that
+address current and monitored.
+
+> *DRAFT — pending PO + attorney review.* Notice address named, settling
+> gap G4. The contact-email controller basis remains an open attorney
+> question (see `record-of-processing.md` §D, A3).
 
 ## 14. Return or deletion of Personal Data
 

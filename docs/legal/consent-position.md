@@ -7,10 +7,10 @@
 > off before a paying contract, and each merchant remains responsible for
 > the consent posture on its own storefront.
 >
-> Basis: WiseGift's product specification (`docs/product/spec.md`) and data
-> model (`docs/core/data.md`) as of 2026-09-29. If either changes
-> materially — in particular the data set or the region — this paper is
-> superseded.
+> Basis: WiseGift's product specification (`docs/product/spec.md`), the
+> system architecture (`docs/engineering/architecture.md`) and the data
+> flows established from the backend code (Flyway V1–V15). If the data
+> set or the region changes materially, this paper is superseded.
 
 ---
 
@@ -118,9 +118,12 @@ Explicit non-practices, so they are on the record:
 - We do not set third-party cookies from the widget.
 - We do not track shoppers across merchants. Two merchants using
   WiseGift produce two independent, unlinked identifiers.
-- We do not receive, request, or store the shopper's name, email, phone,
-  address, IP address, or user-agent. The filtered `orders/create`
-  webhook drops all customer PII at the receiver, before persistence.
+- We do not store or log the shopper's name, email, phone, address, IP
+  address, or user-agent in our application data. The filtered
+  `orders/create` webhook drops all customer PII at the receiver, before
+  persistence. IP address and user-agent are carried on every HTTP
+  request; our application never stores or logs them, though our EU
+  hosting provider's request logs may hold them (see §6).
 - WiseGift never joins session IDs to customer identities. Note that on
   Shopify the identifier is present on your order records (§2), so you
   can associate it with a customer. We recommend your privacy notice
@@ -135,13 +138,16 @@ Explicit non-practices, so they are on the record:
 ## 5. Retention and sub-processors
 
 - **Retention.** Session identifier: 30-day sliding TTL in the browser.
-  Server-side session and event rows: kept for the tenant's active
-  lifetime; hard-purged 30 days after uninstall (see `data.md` §7).
-  Copies in Shopify carts follow Shopify's cart lifetime. Copies on
-  orders follow your own order retention. WiseGift's order rows are
-  deleted after 18 months.
-  > *DRAFT — pending PO + attorney review.* Last three sentences added.
-  > The 18-month purge is planned (build plan M3·1), not yet built.
+  Server-side session and event rows: hard-deleted 120 days after the
+  session was last seen / the event occurred, and in any event
+  hard-purged 30 days after uninstall. Copies in Shopify carts follow
+  Shopify's cart lifetime. Copies on orders follow your own order
+  retention. WiseGift's order rows are deleted after 18 months.
+  > *DRAFT — pending PO + attorney review.* Corrected to the decided
+  > 120-day session/event retention (was "tenant's active lifetime"); the
+  > pre-pivot `data.md` citation was removed (gap G11). The 120-day and
+  > 18-month purges are not yet enforcing: the tenant purge runs in
+  > dry-run (PR #79), so until it leaves dry-run nothing is deleted.
 - **Region.** All storage and compute is in the **EU** at MVP (Neon EU,
   application hosting EU, telemetry EU). A US region is not deployed and
   would require a coordinated DPA and sub-processor update before use.
@@ -149,30 +155,37 @@ Explicit non-practices, so they are on the record:
   OpenAI (intent embedding and LLM ranking — no session ID leaves our
   backend; the intent payload, including free-text interests, and
   product texts are sent to OpenAI's API, which is US-hosted), our EU
-  hosting provider, our EU monitoring provider. The authoritative list
+  hosting provider (Render), and the managed EU Redis cache. No
+  monitoring/observability vendor is engaged at MVP (logs and cost
+  telemetry sit in the EU Postgres database). The authoritative list
   ships with the DPA and is updated in-place.
-  > *DRAFT — pending PO + attorney review.* Previously named Anthropic.
-  > The backend has used OpenAI for ranking since PR 7d. On 2026-10-14
-  > the PO decided to move to an OpenAI EU data-residency project
-  > (`eu.api.openai.com`). That switch has not been made: the backend
-  > still calls the US endpoint, so "US-hosted" stays accurate until it
-  > is switched and verified.
+  > *DRAFT — pending PO + attorney review.* Previously named Anthropic
+  > and listed an EU monitoring provider that is not engaged at MVP
+  > (gap G11; `sub-processors.md` row 8). The backend has used OpenAI for
+  > ranking since PR 7d. On 2026-10-14 the PO decided to move to an
+  > OpenAI EU data-residency project (`eu.api.openai.com`). That switch
+  > has not been made: the backend still calls the US endpoint, so
+  > "US-hosted" stays accurate until it is switched and verified.
 - **Free-text interests.** The intent form has an optional free-text
-  field, up to 5 interest chips. Its contents go to OpenAI (above) and
-  are stored with the session's events. A visitor could type personal or
-  sensitive information about themselves or the gift recipient, such as
-  health or religion. We plan to show a short notice next to the field,
-  e.g. "Don't include personal details". **This notice is planned and has
-  not shipped.**
-  > *DRAFT — pending PO + attorney review.* New bullet.
+  field, up to 5 interest chips. Its contents are **sent transiently to
+  OpenAI** (above) on a live recommendation request and then reduced to
+  a one-way SHA-256 hash that forms part of the 24-hour cache key. They
+  are **not stored** with the session's events or on any other WiseGift
+  table, and they are never written to the order or shared with the
+  merchant. A visitor could type personal or sensitive information about
+  themselves or the gift recipient, such as health or religion. We plan
+  to show a short notice next to the field, e.g. "Don't include personal
+  details". **This notice is planned and has not shipped.**
+  > *DRAFT — pending PO + attorney review.* Corrected: free text is not
+  > stored (gap G1). It is a transient transfer to OpenAI plus a one-way
+  > hash. The Art. 9 locus is therefore the OpenAI transfer, not storage.
   >
   > **ATTORNEY QUESTION (Art. 9):** given that visitors may type
   > special-category data into the free-text field, and that this text is
-  > sent to a US-established processor and is linkable by the merchant to
-  > an identified customer via the order attribute (§2), are a notice and
-  > data minimisation enough? Or does Art. 9 GDPR require a further
-  > measure, for example restricting free text to a fixed vocabulary,
-  > filtering it, or excluding it from storage and merchant exports?
+  > sent transiently to a US-established processor (OpenAI), are a notice
+  > and data minimisation enough? Or does Art. 9 GDPR require a further
+  > measure, for example restricting free text to a fixed vocabulary or
+  > filtering it before it is sent to OpenAI?
 
 ## 6. Where a stricter DPA may disagree, and our fallback
 
