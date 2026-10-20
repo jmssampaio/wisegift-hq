@@ -1826,3 +1826,18 @@
 - **Floating nudge key (PO decision):** `wisegift.floating.nudged` is held **in memory only**, never in localStorage. As a result the floating widget touches no browser storage before consent, and the first-visit pulse may repeat per page. Owner: `frontend-engineer`.
 - **Record of processing (Art. 30(2)) (PO decision):** `security-and-privacy` drafts `docs/legal/record-of-processing.md` for attorney review.
 - Made by: Product Owner (advised by claude, security-and-privacy)
+
+## 2026-10-19 — Hook attractiveness: phasing + PDP preview first (neutral)
+- **Problem framing (PO + claude):** recommendation quality is already good; the gap is **attractiveness** — shoppers don't notice/engage. That is a hook problem (copy, trigger, visual), not a recommender-quality problem. The shopper's mental state differs by page, so the hook's job and entry question must differ by placement: **PLP/category = discovery with a known category** (inherit category, never restate it); **PDP = conversion on a known product** (alternative/similar + budget-aware now; complete-the-look later); **floating tab = a trigger that adopts the page's hook**, not a third content.
+- **Three attractiveness levers** (ROI order): (1) context-adaptive copy via tokens `{category}`/`{product}`/`{store}`; (2) product-preview-in-hook (images before inputs, inputs refine after); (3) floating trigger config (immediate/scroll/dwell/exit-intent).
+- **PO decisions:**
+  - **Phasing:** levers 1 & 3 ship on existing placements as the true quick win; the **preview starts with PDP first**, PLP is a fast-follow.
+  - **PDP preview is NEUTRAL (PO decision):** it shows store-related products served **symmetrically across arms so it does not contaminate the exposed-vs-holdout lift measurement**; WiseGift intelligence stays isolated on the **refine-after-intent** step. A "smart" WiseGift preview is deferred to a later, separately-measured A/B. Rationale: the images-first attention gain is fully delivered by a neutral preview; protecting the lift proof outweighs a marginally smarter preview this early.
+  - Primary metric = **engagement rate `widget_shown → widget_engaged` per placement**, framed as an operational pre/post metric, not a lift claim.
+- **Build reality (grounded in code):**
+  - **PDP preview = small gap.** `precomputed_recs` (Flyway V1) is keyed `(tenant_id, source_platform_product_id, rank)` but **dormant** (no writer/reader). Embeddings + tenant-scoped pgvector NN already exist. Cheapest path = a nightly/post-sync writer (pgvector self-NN, exclude self/unavailable/excluded, top-N) + a serve path that reads `precomputed_recs`, **bypasses SignatureComposer** and keeps `served_from` honest. Config-only parts: context copy, tokens, trigger settings.
+  - **PLP = larger gap (fast-follow).** No collection-membership data in backend; the widget→backend contract carries no collection id. Needs a **new `collection_header` Theme App Extension block** (net-new storefront surface) + a **new `context` dimension on `POST /widget/v1/recommendations`** for `{category}`.
+  - **Complete-the-look** stays dependency-gated (needs co-purchase/curation/taxonomy signal, not cosine similarity).
+- **Drafts produced:** `docs/product/hook-attractiveness-spec.md` (product-analyst) and `docs/engineering/hook-preview-recs-feasibility.md` (recommendations-specialist). Both DRAFT, pending PO review.
+- **Open for the PO later:** context-token vocabulary approval (3 tokens), token fallback model, trigger defaults, consent-degraded behaviour, and the PLP rec-API context field. Not blocking the PDP preview.
+- Made by: Product Owner (advised by claude, product-analyst, recommendations-specialist)
