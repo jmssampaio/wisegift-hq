@@ -3,7 +3,8 @@
 A realistic contemporary-fashion catalogue (Zara/Mango-style) for a **dedicated
 demo dev store**. This is a test bed for the WiseGift recommender: titles, HTML
 descriptions, and tags are deliberately rich because the recommender embeds
-**title + description + tags**. Images are intentionally omitted (see below).
+**title + description + tags**. Products now carry **one real demo image each**
+(see [Images](#images)).
 
 - **File:** `fashion-catalogue.csv` (standard Shopify product-import format)
 - **Vendor / demo brand:** `Atelier Nord`
@@ -12,7 +13,11 @@ descriptions, and tags are deliberately rich because the recommender embeds
 - **Price range:** €16.90 – €129.90
 - **All products:** `Status = active`, `Published = TRUE`, inventory **100 per
   variant** (so nothing is filtered out as unavailable)
-- **Image Src:** blank on every row (deliberate — do not fabricate URLs)
+- **Product Category:** granular Shopify/Google product-taxonomy leaf per Type
+  (e.g. Dresses → `… > Clothing > Dresses`, Shoes → `Apparel & Accessories >
+  Shoes`).
+- **Image Src:** one verified image per product on the product (first) row,
+  `Image Position = 1`; variant rows left blank.
 
 ## What's in it
 
@@ -63,25 +68,53 @@ containing commas — it imports as-is with no spreadsheet round-trip needed.
 (Opening it in Excel/Numbers and re-saving can corrupt quoting; upload the raw
 file.)
 
-## Image note (images added AFTER import)
+## Images
 
-`Image Src` is **blank on every row by design** — fabricated image URLs would
-404 and pollute the store. Add images after the products exist, by either:
+Each product carries **one verified, hotlinkable image** on its product (first)
+row, served from the **DummyJSON demo CDN** (`cdn.dummyjson.com`). URLs are
+**percent-encoded** (DummyJSON paths contain apostrophes/ampersands/spaces, e.g.
+`black-women's-gown` → `black-women%27s-gown`) so Shopify import and browsers
+accept them. Every URL was checked to return `200 image/webp`; images vary
+within each product Type (no two tees share a photo). Variant rows keep
+`Image Src` blank — Shopify attaches the product-row image to all variants.
 
-- **Shopify Burst** (free stock, <https://burst.shopify.com>) — search e.g.
-  "linen shirt", "wool coat", "white trainers", download, and attach to the
-  matching product in the admin; or
-- a **supplied image set** — place files per product and either attach in the
-  admin or re-import with the `Image Src` / `Image Position` columns populated
-  (public URLs, one row per image, matched by `Handle`).
+**Image-to-product mapping** (DummyJSON fashion categories → our Types):
 
-The recommender does **not** need images for this milestone — it embeds text
-only. Images are purely for the demo storefront's visual polish.
+| Our Type | DummyJSON pool | Match |
+| --- | --- | --- |
+| Dresses | `womens-dresses` | exact |
+| Shoes (W / M) | `womens-shoes` / `mens-shoes` | exact |
+| Bags (W) | `womens-bags` | exact |
+| Bags (M) | `womens-bags` | approx (no `mens-bags` slug) |
+| T-Shirts (W / M) | `tops` / `mens-shirts` | exact |
+| Shirts & Blouses (W / M) | `tops` / `mens-shirts` | exact |
+| Accessories | `sunglasses` / `womens-watches` / `womens-jewellery` | approx (per item) |
+| **Knitwear, Trousers, Denim, Outerwear** | `tops` (W) / `mens-shirts` (M) | **approx stand-in** |
+
+The four "gap" Types (Knitwear, Trousers, Denim, Outerwear) have no good
+DummyJSON category, so they use a neutral upper-body clothing image as a
+placeholder. **These are expected to be swapped later.**
+
+> **Licensing — demo / design-partner use only.** DummyJSON images are a free
+> demo/testing resource, fine for an internal dev store and design-partner
+> walkthroughs. **Before any public demo or App Store listing, swap them for
+> Shopify Burst (free stock, <https://burst.shopify.com>) or properly licensed
+> product photography.** Do not treat these as cleared for marketing use.
+
+**Replacing hero images after import:** any product's image can be changed in
+the admin (product → Media → replace) or by re-importing with
+`Overwrite = on`, a populated `Image Src` for the handle, and
+`Image Position = 1`.
+
+The recommender does **not** use images for this milestone — it embeds text
+(title + description + tags) only. Images are purely for storefront polish.
 
 ## Regenerating / editing
 
-The CSV was generated from a script that holds the hand-authored product content
-and expands the variant rows. To change the catalogue, edit product entries
-(title/body/tags/price/variants) and re-run the generator, then re-validate
-(every row 25 columns, handles group correctly, prices/quantities numeric, SKUs
-unique). Keep `Image Src` blank unless you are intentionally supplying real URLs.
+The CSV is generated from a script that holds the hand-authored product content,
+expands variant rows, maps the granular `Product Category` per Type, and assigns
+a varied DummyJSON image per product. To change the catalogue, edit product
+entries (title/body/tags/price/variants) and re-run the generator, then
+re-validate (every row 25 columns, handles group correctly, prices/quantities
+numeric, SKUs unique, every product row has a resolving `Image Src`). Re-verify
+image URLs if the DummyJSON pool changes.
