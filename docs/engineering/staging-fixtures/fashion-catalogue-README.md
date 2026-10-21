@@ -69,6 +69,22 @@ containing commas — it imports as-is with no spreadsheet round-trip needed.
 (Opening it in Excel/Numbers and re-saving can corrupt quoting; upload the raw
 file.)
 
+## Inventory import (`inventory.csv`)
+
+`inventory.csv` bulk-sets stock for every variant. **Import it AFTER the product
+import** — the products/variants must already exist (matched by `Handle` + SKU).
+
+- Shopify admin → **Products → Inventory → Import**, upload `inventory.csv`.
+- **829 data rows** (one per variant), 13 columns:
+  `Handle, Title, Option1 Name, Option1 Value, Option2 Name, Option2 Value,
+  Option3 Name, Option3 Value, SKU, HS Code, COO, My Custom Location,
+  Shop location`.
+- The two location columns (`My Custom Location`, `Shop location`) = the store's
+  two active locations; every row sets **available = 100** at both. Option3,
+  HS Code and COO are blank. Each row's SKU matches a product-CSV variant SKU
+  (1:1, no duplicates). Regenerate it from `fashion-catalogue.csv` if variants
+  change.
+
 ## Images
 
 **Policy: an image is kept only where it genuinely depicts the product's garment
