@@ -3,8 +3,8 @@
 A realistic contemporary-fashion catalogue (Zara/Mango-style) for a **dedicated
 demo dev store**. This is a test bed for the WiseGift recommender: titles, HTML
 descriptions, and tags are deliberately rich because the recommender embeds
-**title + description + tags**. Products now carry **one real demo image each**
-(see [Images](#images)).
+**title + description + tags**. Products in **matched Types carry one real demo
+image**; all other Types are intentionally blank (see [Images](#images)).
 
 - **File:** `fashion-catalogue.csv` (standard Shopify product-import format)
 - **Vendor / demo brand:** `Atelier Nord`
@@ -16,8 +16,9 @@ descriptions, and tags are deliberately rich because the recommender embeds
 - **Product Category:** granular Shopify/Google product-taxonomy leaf per Type
   (e.g. Dresses → `… > Clothing > Dresses`, Shoes → `Apparel & Accessories >
   Shoes`).
-- **Image Src:** one verified image per product on the product (first) row,
-  `Image Position = 1`; variant rows left blank.
+- **Image Src:** verified image on the product (first) row for **matched Types
+  only** (`Image Position = 1`); unmatched Types are blank. **24 products keep an
+  image, 46 are blank.** Variant rows are always blank.
 
 ## What's in it
 
@@ -70,30 +71,30 @@ file.)
 
 ## Images
 
-Each product carries **one verified, hotlinkable image** on its product (first)
-row, served from the **DummyJSON demo CDN** (`cdn.dummyjson.com`). URLs are
-**percent-encoded** (DummyJSON paths contain apostrophes/ampersands/spaces, e.g.
-`black-women's-gown` → `black-women%27s-gown`) so Shopify import and browsers
-accept them. Every URL was checked to return `200 image/webp`; images vary
-within each product Type (no two tees share a photo). Variant rows keep
-`Image Src` blank — Shopify attaches the product-row image to all variants.
+**Policy: an image is kept only where it genuinely depicts the product's garment
+type; every other Type is intentionally blank** (to be filled later via Shopify
+Burst). **24 products keep a verified image; 46 are blank.** Kept images are
+served from the **DummyJSON demo CDN** (`cdn.dummyjson.com`), **percent-encoded**
+(DummyJSON paths contain apostrophes/ampersands/spaces, e.g. `black-women's-gown`
+→ `black-women%27s-gown`), each checked to return `200 image/webp`, and varied
+within a Type. Variant rows always keep `Image Src` blank — Shopify applies the
+product-row image to all variants.
 
-**Image-to-product mapping** (DummyJSON fashion categories → our Types):
+**Coverage by Type:**
 
-| Our Type | DummyJSON pool | Match |
+| Type | Image | DummyJSON pool / why blank |
 | --- | --- | --- |
-| Dresses | `womens-dresses` | exact |
-| Shoes (W / M) | `womens-shoes` / `mens-shoes` | exact |
-| Bags (W) | `womens-bags` | exact |
-| Bags (M) | `womens-bags` | approx (no `mens-bags` slug) |
-| T-Shirts (W / M) | `tops` / `mens-shirts` | exact |
-| Shirts & Blouses (W / M) | `tops` / `mens-shirts` | exact |
-| Accessories | `sunglasses` / `womens-watches` / `womens-jewellery` | approx (per item) |
-| **Knitwear, Trousers, Denim, Outerwear** | `tops` (W) / `mens-shirts` (M) | **approx stand-in** |
+| Dresses | **kept** | `womens-dresses` (exact) |
+| Shoes (W / M) | **kept** | `womens-shoes` / `mens-shoes` (exact) |
+| Women's Bags | **kept** | `womens-bags` (exact) |
+| Men's T-Shirts & Shirts | **kept** | `mens-shirts` (genuine shirts/tees) |
+| **Women's T-Shirts & Shirts** | **blank** | DummyJSON `tops` is entirely frocks/dresses — no genuine top, so blanked |
+| Men's Bags | blank | only women's-handbag images available |
+| Accessories | blank | belts/scarves/hats had sunglasses/watch/jewellery stand-ins |
+| Knitwear, Trousers, Denim, Outerwear | blank | no matching DummyJSON category (shirt/top stand-ins removed) |
 
-The four "gap" Types (Knitwear, Trousers, Denim, Outerwear) have no good
-DummyJSON category, so they use a neutral upper-body clothing image as a
-placeholder. **These are expected to be swapped later.**
+Net kept (24): Women's Dresses 5, Women's Shoes 4, Women's Bags 3, Men's
+T-Shirts 4, Men's Shirts & Blouses 4, Men's Shoes 4.
 
 > **Licensing — demo / design-partner use only.** DummyJSON images are a free
 > demo/testing resource, fine for an internal dev store and design-partner
@@ -101,8 +102,8 @@ placeholder. **These are expected to be swapped later.**
 > Shopify Burst (free stock, <https://burst.shopify.com>) or properly licensed
 > product photography.** Do not treat these as cleared for marketing use.
 
-**Replacing hero images after import:** any product's image can be changed in
-the admin (product → Media → replace) or by re-importing with
+**Adding/replacing images after import:** blank Types (and any hero swap) are
+filled in the admin (product → Media → add/replace) or by re-importing with
 `Overwrite = on`, a populated `Image Src` for the handle, and
 `Image Position = 1`.
 
@@ -116,5 +117,6 @@ expands variant rows, maps the granular `Product Category` per Type, and assigns
 a varied DummyJSON image per product. To change the catalogue, edit product
 entries (title/body/tags/price/variants) and re-run the generator, then
 re-validate (every row 25 columns, handles group correctly, prices/quantities
-numeric, SKUs unique, every product row has a resolving `Image Src`). Re-verify
-image URLs if the DummyJSON pool changes.
+numeric, SKUs unique, kept Types have a resolving `Image Src` + `Image
+Position = 1`, blanked Types have both empty). Re-verify image URLs if the
+DummyJSON pool changes.
