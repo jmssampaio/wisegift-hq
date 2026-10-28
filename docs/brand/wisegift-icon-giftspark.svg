@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" width="1200" height="1200" role="img" aria-label="WiseGift app icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7B5BFF"/>
+      <stop offset="1" stop-color="#4A2BD6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="1200" fill="url(#bg)"/>
+  <!-- gift body -->
+  <rect x="360" y="612" width="480" height="358" rx="40" fill="#FFFFFF"/>
+  <!-- lid -->
+  <rect x="325" y="498" width="550" height="132" rx="34" fill="#FFFFFF"/>
+  <!-- vertical ribbon (brand violet) -->
+  <rect x="566" y="498" width="68" height="472" fill="#6C47FF"/>
+  <!-- sparkle "bow" -->
+  <polygon points="600,258 662,372 776,434 662,496 600,610 538,496 424,434 538,372" fill="#FFFFFF"/>
+  <!-- secondary spark -->
+  <polygon points="828,338 848,382 892,402 848,422 828,466 808,422 764,402 808,382" fill="#B9A7FF"/>
+</svg>
