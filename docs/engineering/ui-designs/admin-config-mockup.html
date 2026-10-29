@@ -1,0 +1,1292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WiseGift — Configuration (design mockup)</title>
+<!--
+  WiseGift merchant-admin "Configuration" — clickable DESIGN MOCKUP.
+  Single self-contained file. No network, no build, no real data.
+  Built from docs/product/admin-config-redesign-v3.md (§3 journey IA) against
+  the editorial "Shopping Guide" widget designs (hooks/*.png, form/*.png).
+
+  This is an approval artifact, NOT the real admin app. The live preview is a
+  faithful STATIC rendering of the editorial screens per state — it does not
+  load the real widget bundle.
+
+  Architecture note (kept close to the real admin): one immutable `defaults`
+  object; `state` is a working draft; the UI dispatches edits that mutate the
+  draft and re-render the preview. Serif (Cormorant) renders the widget
+  preview; a neutral sans renders the admin chrome — same split as production.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* ---- admin chrome tokens (neutral, premium, lots of whitespace) ---- */
+  :root {
+    --ink: #16161a;
+    --ink-soft: #55555e;
+    --ink-faint: #8b8b93;
+    --line: #e7e7ea;
+    --line-soft: #f0f0f2;
+    --surface: #ffffff;
+    --canvas: #f6f6f4;
+    --accent: #111111;          /* admin accent; the WIDGET accent is separate (state.tokens.accent) */
+    --ok: #1c7c54;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(20,20,26,.04), 0 8px 24px rgba(20,20,26,.05);
+    font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--canvas); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  .eyebrow { font-size: .68rem; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  button { font-family: inherit; }
+
+  /* ---- top bar ---- */
+  .topbar {
+    position: sticky; top: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: .85rem 1.5rem; background: rgba(255,255,255,.88); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: .7rem; font-weight: 700; letter-spacing: -.01em; }
+  .brand .mark { width: 26px; height: 26px; border-radius: 7px; background: #111; color: #fff;
+    display: grid; place-items: center; font-family: "Cormorant Garamond", serif; font-size: 1.1rem; font-weight: 600; }
+  .crumb { color: var(--ink-faint); font-size: .9rem; }
+  .crumb b { color: var(--ink); font-weight: 600; }
+  .ship-chip { display: inline-flex; align-items: center; gap: .45rem; font-size: .8rem; font-weight: 600;
+    color: var(--ok); background: #eef7f1; border: 1px solid #cfe9db; padding: .35rem .7rem; border-radius: 999px; }
+  .ship-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+
+  /* ---- jump bar ---- */
+  .jumpbar { position: sticky; top: 56px; z-index: 30; background: rgba(246,246,244,.92); backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line); padding: 0 1.5rem; }
+  .jumpbar-inner { display: flex; gap: .25rem; max-width: 1340px; margin: 0 auto; overflow-x: auto; }
+  .jump { appearance: none; border: 0; background: none; cursor: pointer; white-space: nowrap;
+    padding: .8rem .85rem; font-size: .82rem; font-weight: 600; color: var(--ink-faint);
+    border-bottom: 2px solid transparent; }
+  .jump:hover { color: var(--ink); }
+  .jump.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+  /* ---- layout ---- */
+  .wrap { max-width: 1340px; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.5rem;
+    grid-template-columns: minmax(0,1fr) 420px; align-items: start; }
+  @media (max-width: 980px) { .wrap { grid-template-columns: 1fr; } .preview-col { order: -1; } }
+
+  /* ---- section + cards ---- */
+  .section { margin-bottom: 2rem; scroll-margin-top: 120px; }
+  .section > .sec-head { display: flex; align-items: baseline; gap: .6rem; margin: 0 .25rem .75rem; }
+  .section > .sec-head h2 { font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 1.7rem; margin: 0; letter-spacing: -.01em; }
+  .section > .sec-head .num { font-size: .72rem; font-weight: 700; letter-spacing: .14em; color: var(--ink-faint); }
+  .section > .sec-sub { margin: 0 .25rem 1rem; color: var(--ink-soft); font-size: .9rem; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); margin-bottom: .85rem; overflow: hidden; }
+  .card-head { display: flex; align-items: center; gap: .85rem; padding: 1rem 1.15rem; cursor: pointer; user-select: none; }
+  .card-head:hover { background: #fafafa; }
+  .chev { width: 16px; height: 16px; flex: none; color: var(--ink-faint); transition: transform .18s ease; }
+  .card.open .chev { transform: rotate(90deg); }
+  .card-head .ttl { font-weight: 600; font-size: .98rem; }
+  .card-head .desc { color: var(--ink-faint); font-size: .83rem; margin-top: .15rem; }
+  .card-head .grow { flex: 1 1 auto; min-width: 0; }
+  .badge { font-size: .68rem; font-weight: 600; letter-spacing: .04em; padding: .22rem .55rem; border-radius: 999px; white-space: nowrap; }
+  .badge.default { color: var(--ink-faint); background: var(--line-soft); border: 1px solid var(--line); }
+  .badge.custom { color: #6b4e00; background: #fdf4df; border: 1px solid #f0e2b8; }
+  .badge.off { color: #8a2a2a; background: #fbeeee; border: 1px solid #f2d5d5; }
+  .card-body { display: none; padding: 0 1.15rem 1.2rem; border-top: 1px solid var(--line-soft); }
+  .card.open .card-body { display: block; }
+  .card-tools { display: flex; gap: .5rem; align-items: center; margin: .9rem 0 0; }
+  .toggle-wrap { display: flex; align-items: center; gap: .55rem; }
+
+  /* ---- fields ---- */
+  .field { display: grid; grid-template-columns: 180px 1fr; gap: 1rem; align-items: start; padding: .85rem 0; border-top: 1px solid var(--line-soft); }
+  .field:first-of-type { border-top: 0; }
+  @media (max-width: 560px) { .field { grid-template-columns: 1fr; gap: .35rem; } }
+  .field > label { font-weight: 600; font-size: .86rem; padding-top: .35rem; }
+  .field .hint { color: var(--ink-faint); font-size: .8rem; margin-top: .35rem; }
+  .control { display: flex; flex-direction: column; gap: .4rem; min-width: 0; }
+  input[type=text], input[type=number], select, textarea {
+    font: inherit; font-size: .9rem; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; color: var(--ink); width: 100%; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #111; outline-offset: 1px; border-color: #111; }
+  .copy-row { display: flex; gap: .5rem; align-items: center; }
+  .copy-row input { flex: 1; }
+  .counter { font-size: .72rem; color: var(--ink-faint); white-space: nowrap; }
+  .mini { appearance: none; border: 1px solid var(--line); background: #fff; color: var(--ink-soft);
+    font-size: .74rem; font-weight: 600; padding: .3rem .55rem; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .mini:hover { border-color: #111; color: #111; }
+  .mini.ghost { border-style: dashed; }
+
+  /* language tabs */
+  .lang-tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .lang-tabs button { appearance: none; border: 0; background: #fff; color: var(--ink-faint); font-weight: 600;
+    font-size: .76rem; padding: .35rem .7rem; cursor: pointer; }
+  .lang-tabs button + button { border-left: 1px solid var(--line); }
+  .lang-tabs button.active { background: #111; color: #fff; }
+
+  /* switch */
+  .switch { position: relative; width: 42px; height: 24px; border-radius: 999px; border: 0; background: #d6d6d9; cursor: pointer; transition: background .15s; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .switch[aria-checked=true] { background: #111; }
+  .switch[aria-checked=true]::after { transform: translateX(18px); }
+  .switch.locked { opacity: .55; cursor: not-allowed; }
+
+  /* token swatches */
+  .swatches { display: flex; gap: .6rem; flex-wrap: wrap; }
+  .swatch { display: inline-flex; align-items: center; gap: .5rem; border: 1px solid var(--line); border-radius: 9px; padding: .35rem .5rem; }
+  .swatch input[type=color] { width: 26px; height: 26px; border: 0; padding: 0; background: none; border-radius: 6px; cursor: pointer; }
+  .swatch span { font-size: .78rem; color: var(--ink-soft); }
+
+  /* slider */
+  input[type=range] { width: 100%; accent-color: #111; }
+  .scale-ticks { display: flex; justify-content: space-between; font-size: .72rem; color: var(--ink-faint); margin-top: .2rem; }
+  .valchip { display: inline-block; font-weight: 600; font-size: .78rem; background: var(--line-soft); border: 1px solid var(--line); border-radius: 999px; padding: .2rem .55rem; }
+
+  /* style tiles editor */
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; }
+  @media (max-width: 560px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; }
+  .tile .thumb { height: 72px; }
+  .tile .meta { padding: .45rem .5rem; display: flex; flex-direction: column; gap: .4rem; }
+  .tile .meta input { font-size: .78rem; padding: .3rem .4rem; }
+  .tile .meta .row { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }
+  .tile.off { opacity: .5; }
+  .pickcap { font-size: .78rem; color: var(--ink-soft); }
+  .pickcap b { color: var(--ink); }
+
+  /* list editor */
+  .list-ed { display: flex; flex-direction: column; gap: .4rem; }
+  .list-row { display: flex; align-items: center; gap: .5rem; border: 1px solid var(--line); border-radius: 8px; padding: .35rem .4rem .35rem .55rem; }
+  .list-row.hidden-item { opacity: .45; }
+  .list-row .drag { color: var(--ink-faint); font-size: .9rem; cursor: grab; }
+  .list-row input { flex: 1; border: 0; padding: .2rem; }
+  .list-row input:focus { outline: 0; }
+  .list-row .acts { display: flex; gap: .2rem; }
+  .icon-btn { width: 26px; height: 26px; border: 0; background: none; color: var(--ink-faint); cursor: pointer; border-radius: 6px; font-size: .9rem; }
+  .icon-btn:hover { background: var(--line-soft); color: #111; }
+
+  .readonly-note { display: flex; gap: .55rem; align-items: flex-start; background: #fafafa; border: 1px solid var(--line);
+    border-radius: 9px; padding: .7rem .8rem; font-size: .83rem; color: var(--ink-soft); }
+  .readonly-note b { color: var(--ink); }
+  .pills-ro { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .4rem; }
+  .pill-ro { font-size: .72rem; font-weight: 600; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 6px; padding: .25rem .5rem; color: var(--ink-soft); }
+
+  .adv-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  .adv-table th { text-align: left; color: var(--ink-faint); font-weight: 600; padding: .5rem .4rem; border-bottom: 1px solid var(--line); }
+  .adv-table td { padding: .45rem .4rem; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  .adv-table code { font-family: ui-monospace, Menlo, monospace; font-size: .76rem; color: #444; }
+
+  /* ---- preview column ---- */
+  .preview-col { position: sticky; top: 112px; }
+  .preview-shell { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  .preview-head { padding: .85rem 1rem .5rem; border-bottom: 1px solid var(--line-soft); }
+  .seg { display: inline-flex; flex-wrap: wrap; gap: .3rem; }
+  .seg button { appearance: none; border: 1px solid var(--line); background: #fff; color: var(--ink-soft);
+    font-size: .74rem; font-weight: 600; padding: .34rem .6rem; border-radius: 7px; cursor: pointer; }
+  .seg button.active { background: #111; color: #fff; border-color: #111; }
+  .seg button:disabled { opacity: .35; cursor: not-allowed; }
+  .ctrl-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .55rem; flex-wrap: wrap; }
+  .ctrl-row .lbl { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+  .mode-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .mode-toggle button { border: 0; background: #fff; color: var(--ink-soft); font-size: .74rem; font-weight: 600; padding: .3rem .7rem; cursor: pointer; }
+  .mode-toggle button.active { background: #111; color: #fff; }
+
+  .stage { background: #ececea; padding: 16px; min-height: 440px; display: grid; place-items: center; }
+  .stage-label { text-align: center; font-size: .7rem; color: var(--ink-faint); padding: .5rem 0 0; letter-spacing: .08em; text-transform: uppercase; }
+
+  /* ===== widget preview primitives (editorial, serif) ===== */
+  .wg { --wg-accent: #111111; --wg-bg: #ffffff; --wg-text: #16161a; --wg-radius: 0px; --wg-fs: 1; background: var(--wg-bg); color: var(--wg-text); }
+  .wg-serif { font-family: "Cormorant Garamond", Georgia, serif; }
+  .wg-eyebrow { font-size: calc(10px * var(--wg-fs)); letter-spacing: .28em; text-transform: uppercase; color: #8b8b93; text-align: center; }
+  .wg-h { font-family: "Cormorant Garamond", Georgia, serif; font-weight: 500; line-height: 1.04; letter-spacing: -.01em; }
+  .wg-sub { color: #6a6a72; font-size: calc(13px * var(--wg-fs)); }
+  .wg-x { position: absolute; top: 14px; right: 14px; color: #16161a; font-size: 18px; line-height: 1; }
+  .wg-back { position: absolute; top: 14px; left: 14px; color: #16161a; font-size: 18px; line-height: 1; }
+
+  /* phone frame for wizard steps */
+  .phone { width: 300px; background: #fff; border-radius: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.14); padding: 20px 18px 18px; position: relative; min-height: 420px; display: flex; flex-direction: column; }
+  .facets { display: flex; gap: 7px; flex-wrap: wrap; margin: 14px 0 6px; }
+  .facet { font-size: 10px; letter-spacing: .05em; border: 1px solid #111; border-radius: 2px; padding: 5px 8px; color: #16161a; background: #fff; }
+  .facet.gift { background: var(--wg-accent); color: #fff; display: inline-flex; gap: 5px; align-items: center; border-color: var(--wg-accent); }
+  .counter-step { font-size: 11px; color: #9a9aa0; margin-top: 6px; }
+  .opt-eyebrow { font-size: 10px; letter-spacing: .22em; text-transform: uppercase; color: #9a9aa0; }
+  .step-h { font-size: calc(26px * var(--wg-fs)); margin: 3px 0 2px; }
+  .aud-list { margin-top: 10px; }
+  .aud-row { display: flex; align-items: center; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid #ededed; font-size: calc(14px * var(--wg-fs)); letter-spacing: .03em; }
+  .aud-row.sel { font-weight: 600; }
+  .gift-toggle { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .gift-toggle .gt-txt { flex: 1; }
+  .gift-toggle .gt-txt b { font-size: calc(13px * var(--wg-fs)); display: block; }
+  .gift-toggle .gt-txt span { font-size: calc(11px * var(--wg-fs)); color: #9a9aa0; }
+  .mini-switch { width: 38px; height: 22px; border-radius: 999px; background: #d6d6d9; position: relative; flex: none; }
+  .mini-switch.on { background: var(--wg-accent); }
+  .mini-switch::after { content:""; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; transition: .15s; }
+  .mini-switch.on::after { transform: translateX(16px); }
+  .budget-big { text-align: center; font-size: calc(46px * var(--wg-fs)); margin: 26px 0 2px; }
+  .budget-big .cur { font-size: calc(34px * var(--wg-fs)); }
+  .budget-drag { text-align: center; font-size: calc(12px * var(--wg-fs)); color: #9a9aa0; }
+  .budget-track { margin: 22px 2px 6px; height: 1px; background: #d6d6d9; position: relative; }
+  .budget-knob { position: absolute; top: -8px; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #111; background: #fff; }
+  .budget-ends { display: flex; justify-content: space-between; font-size: calc(11px * var(--wg-fs)); color: #9a9aa0; }
+  .wg-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .wg-tile { position: relative; }
+  .wg-tile .ph { height: 96px; }
+  .wg-tile .cap { display: flex; align-items: center; justify-content: space-between; font-size: calc(11px * var(--wg-fs)); letter-spacing: .06em; padding: 7px 2px 0; }
+  .wg-tile.sel { outline: 1.5px solid #111; outline-offset: 0; }
+  .wg-tile.sel .ph { box-shadow: inset 0 0 0 2px #111; }
+  .pillset { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 16px; }
+  .gpill { font-size: calc(11px * var(--wg-fs)); letter-spacing: .04em; border: 1px solid #d6d6d9; border-radius: 2px; padding: 8px 11px; }
+  .gpill.on { background: var(--wg-accent); color: #fff; border-color: var(--wg-accent); }
+  .ghead { font-size: calc(10px * var(--wg-fs)); letter-spacing: .2em; text-transform: uppercase; color: #9a9aa0; margin-top: 10px; }
+  .wg-foot { margin-top: auto; padding-top: 18px; display: flex; align-items: center; justify-content: space-between; }
+  .wg-skip { font-size: calc(11px * var(--wg-fs)); letter-spacing: .14em; text-transform: uppercase; color: #9a9aa0; }
+  .wg-cta { background: var(--wg-accent); color: #fff; font-size: calc(12px * var(--wg-fs)); letter-spacing: .1em; text-transform: uppercase; padding: 14px 26px; border-radius: var(--wg-radius); }
+  .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; overflow: auto; }
+  .res-card .ph { height: 120px; }
+  .res-card .rt { font-size: calc(11px * var(--wg-fs)); letter-spacing: .04em; margin-top: 7px; }
+  .res-card .rp { font-size: calc(11px * var(--wg-fs)); color: #9a9aa0; margin-top: 3px; }
+  .res-card .add { font-size: calc(11px * var(--wg-fs)); letter-spacing: .12em; margin-top: 5px; }
+
+  /* landing block */
+  .landing { width: 360px; background: #fff; border: 1px solid #ececec; padding: 46px 30px; text-align: center; }
+  .landing .wg-h { font-size: calc(34px * var(--wg-fs)); margin: 16px 0 14px; }
+  .landing .links { display: flex; gap: 34px; justify-content: center; margin-top: 22px; }
+  .wg-link { font-size: calc(13px * var(--wg-fs)); letter-spacing: .08em; text-transform: uppercase; border-bottom: 1.5px solid #111; padding-bottom: 3px; }
+
+  /* collection band */
+  .collection { width: 380px; background: #fff; border: 1px solid #ececec; padding: 26px 26px 20px; }
+  .coll-top { display: flex; justify-content: space-between; font-size: calc(12px * var(--wg-fs)); letter-spacing: .08em; text-transform: uppercase; }
+  .coll-top .cnt { color: #9a9aa0; }
+  .coll-rule { height: 1px; background: #ededed; margin: 14px 0 16px; }
+  .coll-main { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .coll-main .wg-h { font-size: calc(26px * var(--wg-fs)); }
+  .coll-links { display: flex; gap: 18px; flex: none; }
+
+  /* pdp card */
+  .pdp { width: 330px; background: #fff; border: 1px solid #ececec; padding: 22px; }
+  .pdp .pt { font-size: calc(16px * var(--wg-fs)); letter-spacing: .06em; }
+  .pdp .pp { font-size: calc(14px * var(--wg-fs)); color: #555; margin-top: 6px; }
+  .pdp .sizes { display: flex; gap: 14px; font-size: calc(12px * var(--wg-fs)); color: #9a9aa0; margin: 14px 0; }
+  .pdp .sizes b { color: #111; }
+  .pdp .addbtn { background: var(--wg-accent); color: #fff; text-align: center; font-size: calc(12px * var(--wg-fs)); letter-spacing: .12em; padding: 14px; border-radius: var(--wg-radius); }
+  .pdp .rule { height: 1px; background: #ededed; margin: 18px 0; }
+  .pdp .sim-head { font-size: calc(11px * var(--wg-fs)); letter-spacing: .2em; text-transform: uppercase; color: #777; }
+  .sim-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 12px 0; }
+  .sim-grid .ph { height: 74px; }
+  .sim-grid .st { font-size: calc(9px * var(--wg-fs)); letter-spacing: .04em; margin-top: 5px; }
+  .sim-grid .sp { font-size: calc(9px * var(--wg-fs)); color: #9a9aa0; }
+  .refine { font-size: calc(12px * var(--wg-fs)); color: #555; margin-top: 10px; }
+  .refine .rf { color: #111; border-bottom: 1.5px solid #111; letter-spacing: .1em; text-transform: uppercase; padding-bottom: 2px; margin-left: 6px; }
+
+  /* floating */
+  .float-wrap { width: 300px; height: 420px; background: linear-gradient(#efefed,#e6e6e3); position: relative; overflow: hidden; border-radius: 10px; }
+  .float-browser { position: absolute; inset: 0; padding: 16px; }
+  .float-brand { text-align: center; letter-spacing: .4em; font-size: 13px; padding: 8px 0 18px; }
+  .float-hero { height: 150px; background: #e0e0dc; display: grid; place-items: center; color: #a7a7a1; font-size: 11px; letter-spacing: .2em; }
+  .float-tab { position: absolute; right: 0; top: 150px; background: var(--wg-accent); color: #fff; width: 44px; height: 56px; display: grid; place-items: center; }
+  .float-callout { position: absolute; left: 12px; bottom: 12px; right: 12px; background: #fff; border: 1px solid #e6e6e6; padding: 12px; font-size: 11px; color: #777; border-radius: 6px; }
+  .float-callout .tab-demo { display: inline-flex; align-items: center; gap: 8px; background: var(--wg-accent); color: #fff; padding: 9px 14px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+
+  .ph { background: #ddddd8; }
+  .ph.a { background: #dcdcd6; } .ph.b { background: #d3d3cb; } .ph.c { background: #e3e3df; } .ph.d { background: #cdcdc4; }
+
+  /* save bar */
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; transform: translateY(120%); transition: transform .22s ease;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: .8rem 1.5rem; background: #111; color: #fff; box-shadow: 0 -6px 24px rgba(0,0,0,.18); }
+  .savebar.show { transform: translateY(0); }
+  .savebar .st { font-size: .85rem; color: #d4d4d8; }
+  .savebar .btns { display: flex; gap: .6rem; }
+  .btn { appearance: none; border: 0; border-radius: 8px; font-weight: 600; font-size: .85rem; padding: .55rem 1.1rem; cursor: pointer; }
+  .btn.primary { background: #fff; color: #111; }
+  .btn.ghost { background: transparent; color: #fff; border: 1px solid #555; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand"><span class="mark">W</span> WiseGift</div>
+  <div class="crumb">Widget&nbsp; /&nbsp; <b>Configuration</b></div>
+  <div class="ship-chip"><span class="dot"></span> Ready to ship — all defaults</div>
+</div>
+
+<div class="jumpbar">
+  <div class="jumpbar-inner" id="jumpbar">
+    <button class="jump active" data-jump="appearance">Appearance</button>
+    <button class="jump" data-jump="entry">Entry points</button>
+    <button class="jump" data-jump="guide">Shopping Guide</button>
+    <button class="jump" data-jump="results">Results</button>
+    <button class="jump" data-jump="advanced">Advanced</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <!-- ================= LEFT: CONFIG CARDS ================= -->
+  <div class="config-col">
+
+    <!-- global language selector affects every copy editor + the preview -->
+    <div class="card" style="box-shadow:none;background:#fbfbfa">
+      <div class="card-head" style="cursor:default">
+        <div class="grow">
+          <div class="ttl">Copy language</div>
+          <div class="desc">Edit widget text in each shopper language. Admin labels stay in English.</div>
+        </div>
+        <div class="lang-tabs" id="langTabs">
+          <button data-lang="en" class="active">EN</button>
+          <button data-lang="es">ES</button>
+          <button data-lang="pt">PT</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------------- 1. APPEARANCE ---------------- -->
+    <section class="section" id="appearance">
+      <div class="sec-head"><span class="num">01</span><h2>Appearance</h2></div>
+      <p class="sec-sub">Your brand look, applied across every surface. Set it once.</p>
+
+      <div class="card" data-card="appearance-brand">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Colour, shape &amp; typography</div><div class="desc">8 theme tokens — inherits your storefront brand</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label>Colour</label>
+            <div class="control">
+              <div class="swatches">
+                <label class="swatch"><input type="color" value="#111111" data-token="accent"><span>Accent</span></label>
+                <label class="swatch"><input type="color" value="#ffffff" data-token="bg"><span>Background</span></label>
+                <label class="swatch"><input type="color" value="#16161a" data-token="text"><span>Text</span></label>
+              </div>
+              <div class="hint">Accent drives selected tiles and the black CTA buttons.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Corner radius</label>
+            <div class="control">
+              <input type="range" min="0" max="16" step="1" value="0" data-token="radius" aria-label="Corner radius">
+              <span class="valchip" data-radius-chip>Square (0 px)</span>
+              <div class="hint">The editorial design is square-cornered by default.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Typeface</label>
+            <div class="control">
+              <select data-noop>
+                <option>Serif display + sans labels (editorial — default)</option>
+                <option>Inherit storefront fonts</option>
+                <option>All sans</option>
+              </select>
+              <div class="hint">Headlines render in your serif; labels in your sans.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label>Text size</label>
+            <div class="control">
+              <input type="range" min="0.85" max="1.25" step="0.05" value="1" data-token="fontScale" aria-label="Text size" aria-valuetext="Default, 1.0 times">
+              <span class="valchip" data-scale-chip>Default (1.0×)</span>
+              <div class="scale-ticks"><span>Smaller</span><span>Default</span><span>Larger</span></div>
+              <div class="hint">Scales all widget text together; headings stay bigger than body. 44 px tap targets hold at every size.</div>
+            </div>
+          </div>
+          <div class="card-tools"><button class="mini" data-reset>Reset to defaults</button><button class="mini ghost" data-preview="step:1">Preview this</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- 2. ENTRY POINTS ---------------- -->
+    <section class="section" id="entry">
+      <div class="sec-head"><span class="num">02</span><h2>Entry points</h2></div>
+      <p class="sec-sub">The four places the guide can appear. Each is self-contained — enable only what you want.</p>
+
+      <!-- Floating -->
+      <div class="card" data-card="hook-floating">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Floating side tab</div><div class="desc">Icon-only tab on every page · reveals a label on hover</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="Enable floating side tab" data-enable></button>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Position</label><div class="control">
+            <select data-noop><option>Right edge (default)</option><option>Left edge</option></select></div></div>
+          <div class="field"><label>Trigger icon</label><div class="control">
+            <select data-noop><option>Gift (default)</option><option>Sparkle</option><option>Compass</option></select></div></div>
+          <div class="field"><label>Hover label</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="floating.label" maxlength="24" value="HELP ME CHOOSE"><span class="counter" data-count>14/24</span></div>
+            <button class="mini" data-copy-reset="floating.label" style="align-self:flex-start">Reset</button>
+            <div class="hint">Leave empty to show only the icon (the tab goes icon-only).</div>
+          </div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="hook:floating">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- Landing -->
+      <div class="card" data-card="hook-landing">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Landing block</div><div class="desc">Inline editorial block with FOR ME / FOR SOMEONE ELSE</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="Enable landing block" data-enable></button>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Eyebrow</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="landing.eyebrow" maxlength="30" value="SHOPPING GUIDE"><span class="counter" data-count>14/30</span></div></div></div>
+          <div class="field"><label>Headline</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="landing.headline" maxlength="60" value="Not sure what to choose?"><span class="counter" data-count>24/60</span></div>
+            <button class="mini" data-copy-reset="landing.headline" style="align-self:flex-start">Reset</button></div></div>
+          <div class="field"><label>Subline</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="landing.subline" maxlength="90" value="Tell us who it's for. Three questions, thirty seconds."><span class="counter" data-count>52/90</span></div></div></div>
+          <div class="field"><label>Link — self</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="choice.self" maxlength="24" value="FOR ME"><span class="counter" data-count>6/24</span></div></div></div>
+          <div class="field"><label>Link — gift</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="choice.gift" maxlength="24" value="FOR SOMEONE ELSE"><span class="counter" data-count>16/24</span></div>
+            <div class="hint">"For someone else" opens the guide in gift mode.</div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="hook:landing">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- Collection -->
+      <div class="card" data-card="hook-collection">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Collection band</div><div class="desc">Category header band · uses the live count &amp; category</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="Enable collection band" data-enable></button>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Headline template</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="plp.headline" maxlength="80" value="{count} {category}. Who is it for?"><span class="counter" data-count>33/80</span></div>
+            <div class="hint">Insert <button class="mini" data-insert="{count}" data-target="plp.headline">{count}</button> <button class="mini" data-insert="{category}" data-target="plp.headline">{category}</button> — filled live from the collection.</div></div></div>
+          <div class="field"><label>Subline</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="plp.subline" maxlength="90" value="We keep your filters and show the ones worth a look."><span class="counter" data-count>51/90</span></div></div></div>
+          <div class="field"><label>Links</label><div class="control">
+            <div class="readonly-note"><span>↗</span><div>Shares the FOR ME / FOR SOMEONE ELSE labels from the Landing block.</div></div></div></div>
+          <div class="field"><label>Audience</label><div class="control">
+            <div class="readonly-note"><span>ℹ</span><div><b>Kept from the collection context</b> (e.g. Men → Shirts — already the shopper's intent). The guide skips step 1 and starts on Budget.</div></div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="hook:collection">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- PDP -->
+      <div class="card" data-card="hook-pdp">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Product page</div><div class="desc">Similar pieces + a discreet gift REFINE link</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+          <button class="switch" role="switch" aria-checked="true" aria-label="Enable product page similars" data-enable></button>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Similars heading</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="pdp.heading" maxlength="30" value="PICKED FOR YOU"><span class="counter" data-count>14/30</span></div></div></div>
+          <div class="field"><label>How many</label><div class="control">
+            <div style="display:flex;align-items:center;gap:.6rem">
+              <button class="mini" data-count-step="-1">−</button>
+              <span class="valchip" data-pdp-count>6</span>
+              <button class="mini" data-count-step="1">+</button>
+              <span class="hint" style="margin:0">products (4–8)</span>
+            </div></div></div>
+          <div class="field"><label>Gift link</label><div class="control">
+            <div class="toggle-wrap" style="margin-bottom:.5rem"><button class="switch" role="switch" aria-checked="true" aria-label="Show gift refine link" data-pdp-gift></button><span style="font-size:.85rem">Show the "buying this for someone?" link</span></div>
+            <div class="copy-row"><input type="text" data-copy="pdp.giftPrompt" maxlength="40" value="Buying this for someone?"><span class="counter" data-count>24/40</span></div>
+            <div class="copy-row" style="margin-top:.4rem"><input type="text" data-copy="pdp.refine" maxlength="16" value="REFINE"><span class="counter" data-count>6/16</span></div>
+            <div class="hint">REFINE opens the guide in gift mode.</div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="hook:pdp">Preview this</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- 3. SHOPPING GUIDE ---------------- -->
+    <section class="section" id="guide">
+      <div class="sec-head"><span class="num">03</span><h2>Shopping Guide</h2></div>
+      <p class="sec-sub">What the guide asks, step by step — in the order the shopper sees it.</p>
+
+      <div class="card" data-card="guide-title">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Guide title</div><div class="desc">The eyebrow shown on every step</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Title</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="guide.title" maxlength="30" value="Shopping Guide"><span class="counter" data-count>14/30</span></div>
+            <button class="mini" data-copy-reset="guide.title" style="align-self:flex-start">Reset</button></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="step:1">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- Step 1 -->
+      <div class="card" data-card="step-audience">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Step 1 · Audience + gift</div><div class="desc">Who are we dressing today? + the "it's a gift" toggle</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Heading</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.audience.heading" maxlength="60" value="Who are we dressing today?"><span class="counter" data-count>26/60</span></div></div></div>
+          <div class="field"><label>Audiences</label><div class="control">
+            <div class="readonly-note"><span>ℹ</span><div><b>Derived from your catalog's main categories</b> — only audiences you actually sell appear (shown here as an example), never a fixed list.
+              <div class="pills-ro"><span class="pill-ro">Women</span><span class="pill-ro">Men</span><span class="pill-ro">Girl</span><span class="pill-ro">Boy</span><span class="pill-ro">Baby</span></div></div></div></div></div>
+          <div class="field"><label>Gift toggle</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="gift.toggleLabel" maxlength="30" value="It's a gift"><span class="counter" data-count>11/30</span></div>
+            <div class="copy-row" style="margin-top:.4rem"><input type="text" data-copy="gift.toggleHelper" maxlength="50" value="We'll ask about them, not you"><span class="counter" data-count>29/50</span></div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="step:1">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- Step 2 Budget -->
+      <div class="card" data-card="step-budget">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Step 2 · Budget</div><div class="desc">Drag-to-set slider · € 40 → € 350+</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Heading (self)</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.budget.heading.self" maxlength="60" value="Up to how much?"><span class="counter" data-count>15/60</span></div></div></div>
+          <div class="field"><label>Heading (gift)</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.budget.heading.gift" maxlength="60" value="Up to how much for them?"><span class="counter" data-count>24/60</span></div></div></div>
+          <div class="field"><label>Range</label><div class="control">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.5rem">
+              <div><div class="counter" style="margin-bottom:.2rem">Min</div><input type="number" data-budget="min" value="40"></div>
+              <div><div class="counter" style="margin-bottom:.2rem">Max</div><input type="number" data-budget="max" value="350"></div>
+              <div><div class="counter" style="margin-bottom:.2rem">Step</div><input type="number" data-budget="step" value="10"></div>
+              <div><div class="counter" style="margin-bottom:.2rem">Currency</div><select data-budget="currency"><option>EUR</option><option>USD</option><option>GBP</option></select></div>
+            </div>
+            <div class="hint">Max shows as "<span data-budget-maxlabel>€ 350+</span>". A sensible default can be derived from your catalog's price spread.</div></div></div>
+          <div class="field"><label>"Any budget" copy</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="budget.anyLabel" maxlength="24" value="ANY BUDGET"><span class="counter" data-count>10/24</span></div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="step:2">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- Step 3 Style -->
+      <div class="card" data-card="step-style">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Step 3 · Style</div><div class="desc">Image tiles · pick up to 2</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Heading (self)</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.style.heading.self" maxlength="60" value="Which is more you?"><span class="counter" data-count>18/60</span></div></div></div>
+          <div class="field"><label>Heading (gift)</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.style.heading.gift" maxlength="60" value="Which is more her?"><span class="counter" data-count>18/60</span></div></div></div>
+          <div class="field"><label>Helper</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="style.helper" maxlength="60" value="Pick up to two. Not sure? Skip it."><span class="counter" data-count>34/60</span></div></div></div>
+          <div class="field"><label>Style tiles</label><div class="control">
+            <div class="pickcap" style="margin-bottom:.5rem">Toggle each tile, set its label, and <b>pick a catalog image</b>. <b>Max 2</b> selectable by the shopper (fixed).</div>
+            <div class="tiles" id="tileEditor"></div>
+          </div></div>
+          <div class="field"><label>"None" copy</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="style.none" maxlength="24" value="NONE OF THESE"><span class="counter" data-count>13/24</span></div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="step:3">Preview this</button></div>
+        </div>
+      </div>
+
+      <!-- Step 4 Gift details -->
+      <div class="card" data-card="step-gift">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Step 4 · Gift details <span style="font-weight:500;color:var(--ink-faint)">· optional, gift only</span></div><div class="desc">Relationship + occasion · shown only in gift mode</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Eyebrow</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.gift.eyebrow" maxlength="20" value="OPTIONAL"><span class="counter" data-count>8/20</span></div></div></div>
+          <div class="field"><label>Heading</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="step.gift.heading" maxlength="60" value="A little more about them?"><span class="counter" data-count>25/60</span></div></div></div>
+          <div class="field"><label>"They are my…"</label><div class="control">
+            <div class="copy-row" style="margin-bottom:.4rem"><input type="text" data-copy="gift.relationshipHeading" maxlength="30" value="THEY ARE MY"><span class="counter" data-count>11/30</span></div>
+            <div class="list-ed" id="relEditor"></div>
+            <button class="mini ghost" data-list-add="relationship" style="align-self:flex-start;margin-top:.4rem">+ Add relationship</button></div></div>
+          <div class="field"><label>Occasion</label><div class="control">
+            <div class="copy-row" style="margin-bottom:.4rem"><input type="text" data-copy="gift.occasionHeading" maxlength="30" value="OCCASION"><span class="counter" data-count>8/30</span></div>
+            <div class="list-ed" id="occEditor"></div>
+            <button class="mini ghost" data-list-add="occasion" style="align-self:flex-start;margin-top:.4rem">+ Add occasion</button></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="step:4">Preview this</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- 4. RESULTS ---------------- -->
+    <section class="section" id="results">
+      <div class="sec-head"><span class="num">04</span><h2>Results</h2></div>
+      <p class="sec-sub">The picks screen and its editable facet chips.</p>
+
+      <div class="card" data-card="results">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">Picks &amp; chips</div><div class="desc">Heading, subline and the ADD label</div></div>
+          <span class="badge default" data-badge>Using defaults</span>
+        </div>
+        <div class="card-body">
+          <div class="field"><label>Heading</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="results.heading" maxlength="60" value="Our picks for you"><span class="counter" data-count>17/60</span></div></div></div>
+          <div class="field"><label>Subline</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="results.subline" maxlength="60" value="{n} pieces · tap a chip to change"><span class="counter" data-count>32/60</span></div>
+            <div class="hint">Insert <button class="mini" data-insert="{n}" data-target="results.subline">{n}</button> for the live count.</div></div></div>
+          <div class="field"><label>ADD label</label><div class="control">
+            <div class="copy-row"><input type="text" data-copy="results.add" maxlength="16" value="ADD"><span class="counter" data-count>3/16</span></div></div></div>
+          <div class="field"><label>Editable chips</label><div class="control">
+            <div class="readonly-note"><span>ℹ</span><div>Each applied facet renders as a chip. Tapping one jumps the shopper back to that step to change it, then re-ranks. Behaviour is fixed.</div></div></div></div>
+          <div class="card-tools"><button class="mini" data-reset>Reset card</button><button class="mini ghost" data-preview="step:5">Preview this</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------- 5. ADVANCED ---------------- -->
+    <section class="section" id="advanced">
+      <div class="sec-head"><span class="num">05</span><h2>Advanced</h2></div>
+      <p class="sec-sub">Escape hatch. Every string by its raw key — for power users only.</p>
+
+      <div class="card" data-card="advanced">
+        <div class="card-head" data-toggle>
+          <svg class="chev" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+          <div class="grow"><div class="ttl">All strings (raw <code>pf.*</code>)</div><div class="desc">The flat key table — demoted here; the structured editors above are the primary surface</div></div>
+          <span class="badge default" data-badge>Read-only view</span>
+        </div>
+        <div class="card-body">
+          <table class="adv-table">
+            <thead><tr><th>Key</th><th>Current (EN)</th></tr></thead>
+            <tbody id="advBody"></tbody>
+          </table>
+          <div class="hint" style="margin-top:.7rem">The privacy notice is a fixed compliance string and is not shown here (not overridable).</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= RIGHT: LIVE PREVIEW ================= -->
+  <div class="preview-col">
+    <div class="preview-shell">
+      <div class="preview-head">
+        <div class="eyebrow" style="margin-bottom:.5rem">Live preview</div>
+        <div class="seg" id="surfaceSeg">
+          <button data-surface="floating">Floating</button>
+          <button data-surface="landing">Landing</button>
+          <button data-surface="collection">Collection</button>
+          <button data-surface="pdp">Product</button>
+        </div>
+        <div class="ctrl-row">
+          <span class="lbl">Guide step</span>
+          <div class="seg" id="stepSeg">
+            <button data-step="1" class="active">Audience</button>
+            <button data-step="2">Budget</button>
+            <button data-step="3">Style</button>
+            <button data-step="4">Gift</button>
+            <button data-step="5">Results</button>
+          </div>
+        </div>
+        <div class="ctrl-row">
+          <span class="lbl">Mode</span>
+          <div class="mode-toggle" id="modeToggle">
+            <button data-mode="self">Self</button>
+            <button data-mode="gift" class="active">Gift</button>
+          </div>
+        </div>
+      </div>
+      <div class="stage" id="stage"></div>
+      <div class="stage-label" id="stageLabel"></div>
+    </div>
+    <p class="hint" style="text-align:center;margin:.7rem 1rem 0">Faithful static rendering · sample data · updates as you edit. The shipped admin wires this to the real widget-preview bundle.</p>
+  </div>
+</div>
+
+<div class="savebar" id="savebar">
+  <div class="st" id="saveStatus">Unsaved changes</div>
+  <div class="btns">
+    <button class="btn ghost" id="discardBtn">Discard</button>
+    <button class="btn primary" id="saveBtn">Save changes</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   STATE — one immutable defaults object; `state` is the draft.
+   UI edits dispatch into the draft and trigger renderPreview().
+   ============================================================ */
+const CURRENCY = { EUR: "€", USD: "$", GBP: "£" };
+
+// Minimal monochrome line gift glyph (inherits currentColor) — matches the
+// editorial side-tab. Replaces the coloured 🎁 emoji everywhere.
+const giftIcon = (px = 18, sw = 1.5) =>
+  `<svg width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;flex:none"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 0 1 0 5"/></svg>`;
+
+const defaultStrings = {
+  "floating.label":      { en: "HELP ME CHOOSE", es: "AYÚDAME A ELEGIR", pt: "AJUDE-ME A ESCOLHER" },
+  "landing.eyebrow":     { en: "SHOPPING GUIDE", es: "GUÍA DE COMPRA", pt: "GUIA DE COMPRA" },
+  "landing.headline":    { en: "Not sure what to choose?", es: "¿No sabes qué elegir?", pt: "Não sabe o que escolher?" },
+  "landing.subline":     { en: "Tell us who it's for. Three questions, thirty seconds.", es: "Dinos para quién es. Tres preguntas, treinta segundos.", pt: "Diz-nos para quem é. Três perguntas, trinta segundos." },
+  "choice.self":         { en: "FOR ME", es: "PARA MÍ", pt: "PARA MIM" },
+  "choice.gift":         { en: "FOR SOMEONE ELSE", es: "PARA OTRA PERSONA", pt: "PARA OUTRA PESSOA" },
+  "plp.headline":        { en: "{count} {category}. Who is it for?", es: "{count} {category}. ¿Para quién es?", pt: "{count} {category}. Para quem é?" },
+  "plp.subline":         { en: "We keep your filters and show the ones worth a look.", es: "Mantenemos tus filtros y mostramos los que valen la pena.", pt: "Mantemos os teus filtros e mostramos os que valem a pena." },
+  "pdp.heading":         { en: "PICKED FOR YOU", es: "ELEGIDO PARA TI", pt: "ESCOLHIDO PARA TI" },
+  "pdp.giftPrompt":      { en: "Buying this for someone?", es: "¿Lo compras para alguien?", pt: "A comprar para alguém?" },
+  "pdp.refine":          { en: "REFINE", es: "AFINAR", pt: "REFINAR" },
+  "guide.title":         { en: "Shopping Guide", es: "Guía de compra", pt: "Guia de compra" },
+  "step.audience.heading": { en: "Who are we dressing today?", es: "¿A quién vestimos hoy?", pt: "Quem vamos vestir hoje?" },
+  "gift.toggleLabel":    { en: "It's a gift", es: "Es un regalo", pt: "É um presente" },
+  "gift.toggleHelper":   { en: "We'll ask about them, not you", es: "Preguntaremos por esa persona", pt: "Vamos perguntar sobre essa pessoa" },
+  "step.budget.heading.self": { en: "Up to how much?", es: "¿Hasta cuánto?", pt: "Até quanto?" },
+  "step.budget.heading.gift": { en: "Up to how much for them?", es: "¿Hasta cuánto para esa persona?", pt: "Até quanto para essa pessoa?" },
+  "budget.anyLabel":     { en: "ANY BUDGET", es: "SIN LÍMITE", pt: "SEM LIMITE" },
+  "step.style.heading.self": { en: "Which is more you?", es: "¿Cuál va más contigo?", pt: "Qual é mais o teu estilo?" },
+  "step.style.heading.gift": { en: "Which is more her?", es: "¿Cuál va más con ella?", pt: "Qual é mais o estilo dela?" },
+  "style.helper":        { en: "Pick up to two. Not sure? Skip it.", es: "Elige hasta dos. ¿No sabes? Sáltalo.", pt: "Escolhe até dois. Na dúvida? Salta." },
+  "style.none":          { en: "NONE OF THESE", es: "NINGUNO", pt: "NENHUM" },
+  "step.gift.eyebrow":   { en: "OPTIONAL", es: "OPCIONAL", pt: "OPCIONAL" },
+  "step.gift.heading":   { en: "A little more about them?", es: "¿Algo más sobre esa persona?", pt: "Mais um pouco sobre ela?" },
+  "gift.relationshipHeading": { en: "THEY ARE MY", es: "ES MI", pt: "É O MEU/A MINHA" },
+  "gift.occasionHeading": { en: "OCCASION", es: "OCASIÓN", pt: "OCASIÃO" },
+  "results.heading":     { en: "Our picks for you", es: "Nuestra selección para ti", pt: "A nossa seleção para ti" },
+  "results.subline":     { en: "{n} pieces · tap a chip to change", es: "{n} piezas · toca un chip para cambiar", pt: "{n} peças · toca num chip para mudar" },
+  "results.add":         { en: "ADD", es: "AÑADIR", pt: "ADICIONAR" }
+};
+
+const defaults = {
+  tokens: { accent: "#111111", bg: "#ffffff", text: "#16161a", radius: 0, fontScale: 1 },
+  budget: { min: 40, max: 350, step: 10, currency: "EUR" },
+  pdp: { count: 6, giftLink: true },
+  styles: [
+    { id: "everyday", label: "EVERYDAY", on: true, ph: "a" },
+    { id: "tailored", label: "TAILORED", on: true, ph: "b" },
+    { id: "evening",  label: "EVENING",  on: true, ph: "d" },
+    { id: "weekend",  label: "WEEKEND",  on: true, ph: "c" },
+    { id: "sport",    label: "SPORT",    on: false, ph: "a" },
+    { id: "occasion", label: "OCCASION", on: false, ph: "b" }
+  ],
+  relationship: [
+    { label: "PARTNER", on: true }, { label: "PARENT", on: true }, { label: "SIBLING", on: true },
+    { label: "FRIEND", on: true }, { label: "CHILD", on: true }, { label: "COLLEAGUE", on: true }
+  ],
+  occasion: [
+    { label: "BIRTHDAY", on: true }, { label: "CHRISTMAS", on: true },
+    { label: "ANNIVERSARY", on: true }, { label: "JUST BECAUSE", on: true }
+  ]
+};
+
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const state = {
+  tokens: clone(defaults.tokens),
+  budget: clone(defaults.budget),
+  pdp: clone(defaults.pdp),
+  styles: clone(defaults.styles),
+  relationship: clone(defaults.relationship),
+  occasion: clone(defaults.occasion),
+  strings: clone(defaultStrings)
+};
+
+let lang = "en";
+const view = { surface: "landing", step: 1, mode: "gift" };
+const dirtyCards = new Set();
+
+function t(key) {
+  const s = state.strings[key];
+  return (s && (s[lang] || s.en)) || "";
+}
+function curSym() { return CURRENCY[state.budget.currency] || "€"; }
+function maxLabel() { return curSym() + " " + state.budget.max + "+"; }
+
+/* ============================================================
+   PREVIEW RENDERING — faithful static editorial screens.
+   ============================================================ */
+const stage = document.getElementById("stage");
+const stageLabel = document.getElementById("stageLabel");
+
+function tokenVars() {
+  const k = state.tokens;
+  return `--wg-accent:${k.accent};--wg-bg:${k.bg};--wg-text:${k.text};--wg-radius:${k.radius}px;--wg-fs:${k.fontScale};`;
+}
+function phLabel(onPx) { return ""; }
+
+function facetChips(step) {
+  const chips = [];
+  if (view.mode === "gift") chips.push(`<span class="facet gift">${giftIcon(13,1.6)} GIFT</span>`);
+  if (step >= 2) chips.push(`<span class="facet">WOMEN</span>`);
+  if (step >= 3) chips.push(`<span class="facet">UP TO ${curSym()}120</span>`);
+  if (step >= 4) chips.push(`<span class="facet">TAILORED</span>`);
+  return chips.join("");
+}
+
+function renderStep(step) {
+  const title = t("guide.title").toUpperCase();
+  const head = `<div class="wg-eyebrow" style="position:relative">${title}
+      <span class="wg-x">✕</span>${step > 1 ? '<span class="wg-back">‹</span>' : ""}</div>`;
+  let body = "";
+
+  if (step === 1) {
+    const auds = ["WOMEN","MEN","GIRL","BOY","BABY"];
+    body = `
+      <div class="counter-step">1 / 3</div>
+      <div class="wg-h step-h">${esc(t("step.audience.heading"))}</div>
+      <div class="aud-list">
+        ${auds.map((a,i)=>`<div class="aud-row ${i===0?"sel":""}">${a}${i===0?'<span>✓</span>':""}</div>`).join("")}
+      </div>
+      <div class="gift-toggle">
+        <span style="display:inline-flex;color:#16161a">${giftIcon(20,1.5)}</span>
+        <div class="gt-txt"><b>${esc(t("gift.toggleLabel"))}</b><span>${esc(t("gift.toggleHelper"))}</span></div>
+        <div class="mini-switch ${view.mode==="gift"?"on":""}"></div>
+      </div>
+      <div class="wg-foot"><span class="wg-skip">SKIP</span><span class="wg-cta">NEXT</span></div>`;
+  } else if (step === 2) {
+    const heading = view.mode === "gift" ? t("step.budget.heading.gift") : t("step.budget.heading.self");
+    body = `
+      <div class="facets">${facetChips(2)}</div>
+      <div class="counter-step">2 / 3</div>
+      <div class="wg-h step-h">${esc(heading)}</div>
+      <div class="budget-big wg-serif"><span class="cur">${curSym()}</span> 120</div>
+      <div class="budget-drag">Drag to set your budget</div>
+      <div class="budget-track"><div class="budget-knob" style="left:38%"></div></div>
+      <div class="budget-ends"><span>${curSym()} ${state.budget.min}</span><span>${maxLabel()}</span></div>
+      <div class="wg-foot"><span class="wg-skip">${esc(t("budget.anyLabel"))}</span><span class="wg-cta">NEXT</span></div>`;
+  } else if (step === 3) {
+    const heading = view.mode === "gift" ? t("step.style.heading.gift") : t("step.style.heading.self");
+    const tiles = state.styles.filter(s=>s.on).slice(0,4);
+    body = `
+      <div class="facets">${facetChips(3)}</div>
+      <div class="counter-step">3 / 3</div>
+      <div class="wg-h step-h">${esc(heading)}</div>
+      <div class="budget-drag" style="text-align:left;margin-top:4px">${esc(t("style.helper"))}</div>
+      <div class="wg-tiles">
+        ${tiles.map((s,i)=>`<div class="wg-tile ${i===1?"sel":""}"><div class="ph ${s.ph}"></div>
+          <div class="cap">${esc(s.label)}${i===1?'<span>✓</span>':""}</div></div>`).join("")}
+      </div>
+      <div class="wg-foot"><span class="wg-skip">${esc(t("style.none"))}</span><span class="wg-cta">NEXT</span></div>`;
+  } else if (step === 4) {
+    const rels = state.relationship.filter(r=>r.on);
+    const occs = state.occasion.filter(o=>o.on);
+    body = `
+      <div class="facets">${facetChips(4)}</div>
+      <div class="opt-eyebrow">${esc(t("step.gift.eyebrow"))}</div>
+      <div class="wg-h step-h" style="margin-top:4px">${esc(t("step.gift.heading"))}</div>
+      <div class="ghead">${esc(t("gift.relationshipHeading"))}</div>
+      <div class="pillset">${rels.map((r,i)=>`<span class="gpill ${i===0?"on":""}">${esc(r.label)}</span>`).join("")}</div>
+      <div class="ghead">${esc(t("gift.occasionHeading"))}</div>
+      <div class="pillset">${occs.map((o,i)=>`<span class="gpill ${i===1?"on":""}">${esc(o.label)}</span>`).join("")}</div>
+      <div class="wg-foot"><span class="wg-skip">SKIP</span><span class="wg-cta">SEE PICKS</span></div>`;
+  } else {
+    const picks = [["WOOL BLEND COAT","129,00"],["SATIN SLIP DRESS","59,90"],["PLEATED TROUSERS","49,00"],["KNIT CARDIGAN","79,00"]];
+    const sub = t("results.subline").replace("{n}", "8");
+    const chips = (view.mode==="gift" ? ["WOMEN","UP TO "+curSym()+"120","EVERYDAY","EVENING"] : ["WOMEN","UP TO "+curSym()+"120","EVERYDAY","EVENING"]);
+    body = `
+      <div class="facets">${chips.map(c=>`<span class="facet">${c}</span>`).join("")}</div>
+      <div class="wg-h step-h" style="margin-top:6px">${esc(t("results.heading"))}</div>
+      <div class="budget-drag" style="text-align:left">${esc(sub)}</div>
+      <div class="results-grid">
+        ${picks.map((p,i)=>`<div class="res-card"><div class="ph ${["a","b","d","c"][i]}"></div>
+          <div class="rt">${p[0]}</div><div class="rp">${p[1]} EUR</div><div class="add">${esc(t("results.add"))}</div></div>`).join("")}
+      </div>`;
+  }
+  return `<div class="phone wg" style="${tokenVars()}">${head}${body}</div>`;
+}
+
+function renderHook(surface) {
+  if (surface === "landing") {
+    return `<div class="landing wg" style="${tokenVars()}">
+      <div class="wg-eyebrow">${esc(t("landing.eyebrow"))}</div>
+      <div class="wg-h">${esc(t("landing.headline"))}</div>
+      <div class="wg-sub">${esc(t("landing.subline"))}</div>
+      <div class="links"><span class="wg-link">${esc(t("choice.self"))}</span><span class="wg-link">${esc(t("choice.gift"))}</span></div>
+    </div>`;
+  }
+  if (surface === "collection") {
+    const h = t("plp.headline").replace("{count}","312").replace("{category}","coats");
+    return `<div class="collection wg" style="${tokenVars()}">
+      <div class="coll-top"><span>WOMAN / COATS</span><span class="cnt">312 items</span></div>
+      <div class="coll-rule"></div>
+      <div class="coll-main"><div><div class="wg-h">${esc(h)}</div><div class="wg-sub" style="margin-top:8px">${esc(t("plp.subline"))}</div></div>
+        <div class="coll-links"><span class="wg-link">${esc(t("choice.self"))}</span><span class="wg-link">${esc(t("choice.gift"))}</span></div></div>
+    </div>`;
+  }
+  if (surface === "pdp") {
+    const n = state.pdp.count;
+    const sims = [["CAMEL COAT","139,00"],["BELTED TRENCH","119,00"],["SHORT JACKET","89,90"]];
+    const grid = Array.from({length: Math.min(n,3)}).map((_,i)=>
+      `<div><div class="ph ${["c","a","b"][i]}"></div><div class="st">${sims[i][0]}</div><div class="sp">${sims[i][1]} EUR</div></div>`).join("");
+    const refine = state.pdp.giftLink
+      ? `<div class="refine">${esc(t("pdp.giftPrompt"))}<span class="rf">${esc(t("pdp.refine"))}</span></div>` : "";
+    return `<div class="pdp wg" style="${tokenVars()}">
+      <div class="pt">WOOL BLEND COAT</div><div class="pp">129,00 EUR</div>
+      <div class="sizes">XS <b>S</b> M L XL</div>
+      <div class="addbtn">ADD</div>
+      <div class="rule"></div>
+      <div class="sim-head">${esc(t("pdp.heading"))} <span style="color:#bbb">· ${n}</span></div>
+      <div class="sim-grid">${grid}</div>
+      ${refine}
+    </div>`;
+  }
+  // floating
+  const label = t("floating.label");
+  const tabDemo = label.trim() === ""
+    ? `<span class="tab-demo">${giftIcon(14,1.6)}</span> <span style="margin-left:6px">Icon-only tab (label cleared)</span>`
+    : `<span class="tab-demo">${giftIcon(14,1.6)} ${esc(label)}</span>`;
+  return `<div class="float-wrap wg" style="${tokenVars()}">
+    <div class="float-browser">
+      <div class="float-brand">BRAND</div>
+      <div class="float-hero">NEW COLLECTION</div>
+    </div>
+    <div class="float-tab">${giftIcon(22,1.5)}</div>
+    <div class="float-callout">Desktop reveals the label on hover:<br><br>${tabDemo}</div>
+  </div>`;
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+const STEP_NAMES = { 1:"Audience", 2:"Budget", 3:"Style", 4:"Gift details", 5:"Results" };
+const SURFACE_NAMES = { floating:"Floating side tab", landing:"Landing block", collection:"Collection band", pdp:"Product page" };
+
+function renderPreview() {
+  // When a hook surface is chosen we show its native screen; otherwise the wizard step.
+  if (view.surface === "landing" || view.surface === "collection" || view.surface === "pdp" || view.surface === "floating") {
+    if (view.viaStep) {
+      stage.innerHTML = renderStep(view.step);
+      stageLabel.textContent = `Shopping Guide · ${STEP_NAMES[view.step]} · ${view.mode} mode`;
+    } else {
+      stage.innerHTML = renderHook(view.surface);
+      stageLabel.textContent = SURFACE_NAMES[view.surface];
+    }
+  }
+  syncControls();
+}
+
+function syncControls() {
+  document.querySelectorAll("#surfaceSeg button").forEach(b =>
+    b.classList.toggle("active", !view.viaStep && b.dataset.surface === view.surface));
+  document.querySelectorAll("#stepSeg button").forEach(b => {
+    b.classList.toggle("active", view.viaStep && Number(b.dataset.step) === view.step);
+    if (b.dataset.step === "4") b.disabled = view.mode === "self";
+  });
+  document.querySelectorAll("#modeToggle button").forEach(b =>
+    b.classList.toggle("active", b.dataset.mode === view.mode));
+}
+
+/* ============================================================
+   WIRING
+   ============================================================ */
+function markDirty(cardEl) {
+  if (!cardEl) return;
+  const name = cardEl.dataset.card;
+  dirtyCards.add(name);
+  const badge = cardEl.querySelector("[data-badge]");
+  if (badge && !badge.textContent.includes("Read-only")) {
+    badge.textContent = "Customized";
+    badge.className = "badge custom";
+  }
+  showSave();
+}
+function showSave(){ document.getElementById("savebar").classList.add("show"); }
+
+function cardOf(el){ return el.closest("[data-card]"); }
+
+// collapse / expand
+document.querySelectorAll("[data-toggle]").forEach(h => {
+  h.addEventListener("click", (e) => {
+    if (e.target.closest("[data-enable]") || e.target.closest(".switch")) return; // toggles handle themselves
+    h.closest(".card").classList.toggle("open");
+  });
+});
+
+// language tabs
+document.getElementById("langTabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  lang = b.dataset.lang;
+  document.querySelectorAll("#langTabs button").forEach(x => x.classList.toggle("active", x === b));
+  // repopulate every copy field for the new language
+  document.querySelectorAll("[data-copy]").forEach(inp => {
+    inp.value = t(inp.dataset.copy);
+    updateCounter(inp);
+  });
+  renderPreview();
+  renderAdvTable();
+});
+
+// copy fields
+function updateCounter(inp) {
+  const row = inp.closest(".copy-row");
+  const c = row && row.querySelector("[data-count]");
+  if (c) c.textContent = `${inp.value.length}/${inp.maxLength}`;
+}
+document.querySelectorAll("[data-copy]").forEach(inp => {
+  inp.addEventListener("input", () => {
+    state.strings[inp.dataset.copy][lang] = inp.value;
+    updateCounter(inp);
+    markDirty(cardOf(inp));
+    renderPreview();
+    renderAdvTable();
+  });
+});
+document.querySelectorAll("[data-copy-reset]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const key = btn.dataset.copyReset;
+    state.strings[key][lang] = defaultStrings[key][lang];
+    const inp = document.querySelector(`[data-copy="${key}"]`);
+    if (inp) { inp.value = t(key); updateCounter(inp); }
+    renderPreview(); renderAdvTable();
+  });
+});
+// insert tokens into templated fields
+document.querySelectorAll("[data-insert]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const key = btn.dataset.target;
+    const inp = document.querySelector(`[data-copy="${key}"]`);
+    if (!inp) return;
+    inp.value = (inp.value + " " + btn.dataset.insert).trim();
+    state.strings[key][lang] = inp.value;
+    updateCounter(inp); markDirty(cardOf(inp)); renderPreview(); renderAdvTable();
+  });
+});
+
+// tokens
+document.querySelectorAll("[data-token]").forEach(inp => {
+  inp.addEventListener("input", () => {
+    const k = inp.dataset.token;
+    state.tokens[k] = (k === "radius") ? Number(inp.value) : (k === "fontScale" ? Number(inp.value) : inp.value);
+    if (k === "fontScale") {
+      const chip = document.querySelector("[data-scale-chip]");
+      const v = state.tokens.fontScale;
+      const word = v < 1 ? "Smaller" : v > 1 ? "Larger" : "Default";
+      chip.textContent = `${word} (${v.toFixed(2).replace(/0$/,"")}×)`;
+    }
+    if (k === "radius") {
+      const chip = document.querySelector("[data-radius-chip]");
+      chip.textContent = state.tokens.radius === 0 ? "Square (0 px)" : `${state.tokens.radius} px`;
+    }
+    markDirty(cardOf(inp));
+    renderPreview();
+  });
+});
+
+// budget range editor
+document.querySelectorAll("[data-budget]").forEach(inp => {
+  inp.addEventListener("input", () => {
+    const k = inp.dataset.budget;
+    state.budget[k] = (k === "currency") ? inp.value : Number(inp.value);
+    document.querySelector("[data-budget-maxlabel]").textContent = maxLabel();
+    markDirty(cardOf(inp));
+    renderPreview();
+  });
+});
+
+// pdp count stepper + gift toggle
+document.querySelectorAll("[data-count-step]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const next = state.pdp.count + Number(btn.dataset.countStep);
+    state.pdp.count = Math.max(4, Math.min(8, next));
+    document.querySelector("[data-pdp-count]").textContent = state.pdp.count;
+    markDirty(cardOf(btn)); renderPreview();
+  });
+});
+
+// switches (enable + pdp gift)
+document.querySelectorAll("[data-enable]").forEach(sw => {
+  sw.addEventListener("click", () => {
+    const on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", String(on));
+    const card = cardOf(sw);
+    const badge = card.querySelector("[data-badge]");
+    if (!on) { badge.textContent = "Disabled"; badge.className = "badge off"; }
+    else { badge.textContent = "Customized"; badge.className = "badge custom"; }
+    markDirty(card);
+  });
+});
+document.querySelectorAll("[data-pdp-gift]").forEach(sw => {
+  sw.addEventListener("click", () => {
+    const on = sw.getAttribute("aria-checked") !== "true";
+    sw.setAttribute("aria-checked", String(on));
+    state.pdp.giftLink = on;
+    markDirty(cardOf(sw)); renderPreview();
+  });
+});
+
+// preview-this buttons
+document.querySelectorAll("[data-preview]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const [kind, val] = btn.dataset.preview.split(":");
+    if (kind === "hook") { view.surface = val; view.viaStep = false; }
+    else { view.step = Number(val); view.viaStep = true; }
+    renderPreview();
+    document.querySelector(".preview-col").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+});
+
+// preview switchers
+document.getElementById("surfaceSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  view.surface = b.dataset.surface; view.viaStep = false; renderPreview();
+});
+document.getElementById("stepSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b || b.disabled) return;
+  view.step = Number(b.dataset.step); view.viaStep = true; renderPreview();
+});
+document.getElementById("modeToggle").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  view.mode = b.dataset.mode;
+  if (view.mode === "self" && view.step === 4) view.step = 3;
+  renderPreview();
+});
+
+// per-card reset
+document.querySelectorAll("[data-reset]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const card = cardOf(btn);
+    const name = card.dataset.card;
+    resetCard(name, card);
+  });
+});
+function resetCard(name, card) {
+  if (name === "appearance-brand") {
+    state.tokens = clone(defaults.tokens);
+    card.querySelectorAll("[data-token]").forEach(inp => {
+      const k = inp.dataset.token; inp.value = state.tokens[k];
+    });
+    document.querySelector("[data-scale-chip]").textContent = "Default (1.0×)";
+    document.querySelector("[data-radius-chip]").textContent = "Square (0 px)";
+  }
+  if (name === "step-budget") {
+    state.budget = clone(defaults.budget);
+    card.querySelectorAll("[data-budget]").forEach(inp => inp.value = state.budget[inp.dataset.budget]);
+    document.querySelector("[data-budget-maxlabel]").textContent = maxLabel();
+  }
+  if (name === "hook-pdp") {
+    state.pdp = clone(defaults.pdp);
+    document.querySelector("[data-pdp-count]").textContent = state.pdp.count;
+    const g = card.querySelector("[data-pdp-gift]"); g.setAttribute("aria-checked","true");
+  }
+  if (name === "step-style") buildTiles();
+  if (name === "step-gift") { state.relationship = clone(defaults.relationship); state.occasion = clone(defaults.occasion); buildLists(); }
+  // reset the copy fields owned by this card back to defaults (current language)
+  card.querySelectorAll("[data-copy]").forEach(inp => {
+    const key = inp.dataset.copy;
+    state.strings[key] = clone(defaultStrings[key]);
+    inp.value = t(key); updateCounter(inp);
+  });
+  // badge back to default
+  const badge = card.querySelector("[data-badge]");
+  if (badge && !badge.textContent.includes("Read-only")) { badge.textContent = "Using defaults"; badge.className = "badge default"; }
+  dirtyCards.delete(name);
+  renderPreview(); renderAdvTable();
+}
+
+/* ---- style tile editor ---- */
+function buildTiles() {
+  const host = document.getElementById("tileEditor");
+  host.innerHTML = state.styles.map((s, i) => `
+    <div class="tile ${s.on ? "" : "off"}" data-tile="${i}">
+      <div class="ph ${s.ph} thumb"></div>
+      <div class="meta">
+        <input type="text" value="${esc(s.label)}" data-tile-label="${i}" aria-label="Style label">
+        <div class="row">
+          <button class="mini" data-tile-img="${i}">Pick image</button>
+          <button class="switch" role="switch" aria-checked="${s.on}" data-tile-on="${i}" aria-label="Show style" style="width:34px;height:20px"></button>
+        </div>
+      </div>
+    </div>`).join("");
+  host.querySelectorAll("[data-tile-label]").forEach(inp => inp.addEventListener("input", () => {
+    state.styles[Number(inp.dataset.tileLabel)].label = inp.value.toUpperCase();
+    markDirty(document.querySelector('[data-card="step-style"]')); renderPreview();
+  }));
+  host.querySelectorAll("[data-tile-on]").forEach(sw => sw.addEventListener("click", () => {
+    const i = Number(sw.dataset.tileOn);
+    state.styles[i].on = !state.styles[i].on;
+    buildTiles(); markDirty(document.querySelector('[data-card="step-style"]')); renderPreview();
+  }));
+  host.querySelectorAll("[data-tile-img]").forEach(btn => btn.addEventListener("click", () => {
+    const i = Number(btn.dataset.tileImg);
+    const order = ["a","b","c","d"]; const cur = order.indexOf(state.styles[i].ph);
+    state.styles[i].ph = order[(cur + 1) % order.length]; // cycle a sample catalog image
+    buildTiles(); markDirty(document.querySelector('[data-card="step-style"]')); renderPreview();
+  }));
+}
+
+/* ---- list editors (relationship / occasion) ---- */
+function buildLists() {
+  renderList("relationship", "relEditor");
+  renderList("occasion", "occEditor");
+}
+function renderList(key, hostId) {
+  const host = document.getElementById(hostId);
+  const arr = state[key];
+  host.innerHTML = arr.map((item, i) => `
+    <div class="list-row ${item.on ? "" : "hidden-item"}">
+      <span class="drag">⋮⋮</span>
+      <input type="text" value="${esc(item.label)}" data-li="${key}:${i}">
+      <div class="acts">
+        <button class="icon-btn" data-lmove="${key}:${i}:-1" title="Move up">↑</button>
+        <button class="icon-btn" data-lmove="${key}:${i}:1" title="Move down">↓</button>
+        <button class="icon-btn" data-ltoggle="${key}:${i}" title="Show/hide">${item.on ? "👁" : "🚫"}</button>
+        <button class="icon-btn" data-lremove="${key}:${i}" title="Remove">✕</button>
+      </div>
+    </div>`).join("");
+  host.querySelectorAll("[data-li]").forEach(inp => inp.addEventListener("input", () => {
+    const [k, i] = inp.dataset.li.split(":"); state[k][Number(i)].label = inp.value.toUpperCase();
+    markDirty(document.querySelector('[data-card="step-gift"]')); renderPreview();
+  }));
+  host.querySelectorAll("[data-lmove]").forEach(b => b.addEventListener("click", () => {
+    const [k, i, d] = b.dataset.lmove.split(":"); const arr = state[k]; const idx = Number(i), ni = idx + Number(d);
+    if (ni < 0 || ni >= arr.length) return;
+    [arr[idx], arr[ni]] = [arr[ni], arr[idx]];
+    buildLists(); markDirty(document.querySelector('[data-card="step-gift"]')); renderPreview();
+  }));
+  host.querySelectorAll("[data-ltoggle]").forEach(b => b.addEventListener("click", () => {
+    const [k, i] = b.dataset.ltoggle.split(":"); state[k][Number(i)].on = !state[k][Number(i)].on;
+    buildLists(); markDirty(document.querySelector('[data-card="step-gift"]')); renderPreview();
+  }));
+  host.querySelectorAll("[data-lremove]").forEach(b => b.addEventListener("click", () => {
+    const [k, i] = b.dataset.lremove.split(":"); state[k].splice(Number(i), 1);
+    buildLists(); markDirty(document.querySelector('[data-card="step-gift"]')); renderPreview();
+  }));
+}
+document.querySelectorAll("[data-list-add]").forEach(btn => btn.addEventListener("click", () => {
+  const key = btn.dataset.listAdd;
+  if (state[key].length >= 6) return; // cap ~6 per the IA
+  state[key].push({ label: "NEW", on: true });
+  buildLists(); markDirty(document.querySelector('[data-card="step-gift"]')); renderPreview();
+}));
+
+/* ---- advanced raw table ---- */
+function renderAdvTable() {
+  const body = document.getElementById("advBody");
+  body.innerHTML = Object.keys(defaultStrings).map(k =>
+    `<tr><td><code>pf.${k}</code></td><td>${esc(state.strings[k].en)}</td></tr>`).join("");
+}
+
+/* ---- jump bar scroll-spy ---- */
+const jumpBtns = Array.from(document.querySelectorAll(".jump"));
+jumpBtns.forEach(b => b.addEventListener("click", () => {
+  document.getElementById(b.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" });
+}));
+const sections = jumpBtns.map(b => document.getElementById(b.dataset.jump));
+const spy = new IntersectionObserver((entries) => {
+  entries.forEach(en => {
+    if (en.isIntersecting) {
+      const id = en.target.id;
+      jumpBtns.forEach(b => b.classList.toggle("active", b.dataset.jump === id));
+    }
+  });
+}, { rootMargin: "-120px 0px -70% 0px" });
+sections.forEach(s => spy.observe(s));
+
+/* ---- save bar ---- */
+document.getElementById("saveBtn").addEventListener("click", () => {
+  document.getElementById("saveStatus").textContent = "Saved just now (mockup — nothing persisted)";
+  setTimeout(() => document.getElementById("savebar").classList.remove("show"), 900);
+});
+document.getElementById("discardBtn").addEventListener("click", () => location.reload());
+
+/* ---- init ---- */
+buildTiles();
+buildLists();
+renderAdvTable();
+renderPreview();
+// open the first card of each section so the structure reads at a glance
+document.querySelector('[data-card="appearance-brand"]').classList.add("open");
+</script>
+</body>
+</html>
